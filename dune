@@ -1,0 +1,20 @@
+(library
+ (name camlstar)
+ (wrapped false)
+ (modules ast lexer parser parse))
+
+(ocamllex lexer)
+
+(menhir
+ (modules parser)
+ (flags (--explain)))
+
+(executable
+ (name example)
+ (modules example)
+ (libraries camlstar))
+
+(executable
+ (name parse_test)
+ (modules parse_test)
+ (libraries camlstar))

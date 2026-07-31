@@ -1,0 +1,30 @@
+module Demo.List
+
+// An inductive type: type parameters only; precision lives in refinements.
+type list 'a =
+  | Nil : list 'a
+  | Cons : hd:'a -> tl:list 'a -> list 'a
+
+// A dependent function type with an F*-style refinement on the result.
+val append : l1:list 'a -> l2:list 'a -> r:list 'a{len r = len l1 + len l2}
+
+// A recursive definition using match and if (unannotated binders).
+let rec length l =
+  match l with
+  | Nil -> 0
+  | Cons hd tl -> 1 + length tl
+
+let classify n =
+  if n < 0 then Neg else if n = 0 then Zero else Pos
+
+// A lemma, desugared to squash-refinements.
+val mem_cons_head : x:'a -> l:list 'a -> Lemma (ensures mem x (Cons x l))
+
+// Axioms and quantifiers, annotated and unannotated.
+assume refl : forall (n:int). n = n
+assume succ_ex : forall m. exists k. k = m + 1
+
+#set-options "--z3rlimit 20"
+
+[@@expect_failure [19]]
+val bad : bool
