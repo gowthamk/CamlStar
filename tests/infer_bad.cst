@@ -1,0 +1,4 @@
+module Infer.Bad
+
+// int/float clash through the numeric operator +
+let bad = 3 + 4.0

@@ -1,7 +1,7 @@
 (library
  (name camlstar)
  (wrapped false)
- (modules ast lexer parser parse))
+ (modules ast lexer parser parse unify infer))
 
 (ocamllex lexer)
 
@@ -10,11 +10,11 @@
  (flags (--explain)))
 
 (executable
- (name example)
- (modules example)
+ (name parse_test)
+ (modules parse_test)
  (libraries camlstar))
 
 (executable
- (name parse_test)
- (modules parse_test)
+ (name infer_test)
+ (modules infer_test)
  (libraries camlstar))

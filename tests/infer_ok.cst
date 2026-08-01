@@ -1,0 +1,35 @@
+module Infer.Ok
+
+type list 'a =
+  | Nil : list 'a
+  | Cons : hd:'a -> tl:list 'a -> list 'a
+
+type order =
+  | Neg : order
+  | Zero : order
+  | Pos : order
+
+// recursion + match: length : list 'a -> int
+let rec length l =
+  match l with
+  | Nil -> 0
+  | Cons hd tl -> 1 + length tl
+
+// if/then/else (desugared to match on bool); numeric comparison ⇒ int
+let classify n =
+  if n < 0 then Neg else if n = 0 then Zero else Pos
+
+// let-polymorphism: id : 'a -> 'a, used at two types below
+let id x = x
+let a = id 3
+let b = id true
+
+// literals pin int vs float
+let n = 3
+let pi = 3.14
+
+// float flows through a numeric operator (no float-specific operator needed)
+let scale r = r * pi
+
+// unresolved numeric defaults to int
+let add x y = x + y

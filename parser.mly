@@ -347,7 +347,7 @@ tmMul:
 
 tmPrefix:
   | TILDE e=tmPrefix { fun sc -> mk_not (e sc) }
-  | MINUS e=tmPrefix { fun sc -> mk_app (Tm_fvar (lid_of_str "-")) [e sc] }
+  | MINUS e=tmPrefix { fun sc -> mk_app (Tm_fvar (lid_of_str "neg")) [e sc] }
   | e=appTerm        { e }
 
 cmpOp:
