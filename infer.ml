@@ -1,55 +1,9 @@
 (* infer.ml — see infer.mli. *)
 
 open Unify
+open Shape   (* erase / reflect / erase_scheme / reflect_scheme / the ischeme type *)
 
 exception Type_error of string
-
-(* A type scheme over shapes; the bool marks a *numeric* bound variable. *)
-type ischeme = { bound : (Ast.tyvar * bool) list; body : ityp }
-
-(* ===== Ast.typ <-> ityp (refinements erased) ===== *)
-
-let rec erase (t : Ast.typ) : ityp =
-  match t with
-  | Ast.T_refine { rbase; _ } -> erase_base rbase
-  | Ast.T_arrow { adom; acod; _ } -> I_arrow (erase adom, erase acod)
-and erase_base (b : Ast.base_typ) : ityp =
-  match b with
-  | Ast.B_int -> I_int | Ast.B_bool -> I_bool | Ast.B_float -> I_float
-  | Ast.B_unit -> I_unit | Ast.B_string -> I_string
-  | Ast.B_var tv -> I_var tv
-  | Ast.B_app (l, args) -> I_app (l, List.map erase args)
-
-(* ityp -> Ast.typ with trivial refinements. Stray unsolved metas: numeric ⇒ int
-   (via zonk), otherwise a fresh generalized type variable (memoized by mid). *)
-let reflect (t : ityp) : Ast.typ =
-  let memo : (int, Ast.tyvar) Hashtbl.t = Hashtbl.create 8 in
-  let rec go t =
-    match repr t with
-    | I_int -> Ast.mk_base Ast.B_int
-    | I_bool -> Ast.mk_base Ast.B_bool
-    | I_float -> Ast.mk_base Ast.B_float
-    | I_unit -> Ast.mk_base Ast.B_unit
-    | I_string -> Ast.mk_base Ast.B_string
-    | I_var tv -> Ast.mk_base (Ast.B_var tv)
-    | I_app (l, args) -> Ast.mk_base (Ast.B_app (l, List.map go args))
-    | I_arrow (a, b) -> Ast.mk_arrow (Ast.fresh_var "_") (go a) (go b)
-    | I_meta m ->
-      if m.numeric then Ast.mk_base Ast.B_int
-      else
-        let tv = match Hashtbl.find_opt memo m.mid with
-          | Some tv -> tv
-          | None -> let tv = Ast.fresh_tyvar "a" in Hashtbl.add memo m.mid tv; tv
-        in
-        Ast.mk_base (Ast.B_var tv)
-  in
-  go t
-
-let erase_scheme (ts : Ast.tscheme) : ischeme =
-  { bound = List.map (fun tv -> (tv, false)) ts.Ast.ts_vars; body = erase ts.Ast.ts_typ }
-
-let reflect_scheme (sch : ischeme) : Ast.tscheme =
-  { Ast.ts_vars = List.map fst sch.bound; ts_typ = reflect sch.body }
 
 (* ===== instantiation / generalization ===== *)
 

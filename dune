@@ -1,7 +1,7 @@
 (library
  (name camlstar)
  (wrapped false)
- (modules ast lexer parser parse unify infer))
+ (modules ast lexer parser parse unify subst shape infer vc check))
 
 (ocamllex lexer)
 
@@ -17,4 +17,9 @@
 (executable
  (name infer_test)
  (modules infer_test)
+ (libraries camlstar))
+
+(executable
+ (name main)
+ (modules main)
  (libraries camlstar))

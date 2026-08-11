@@ -1,0 +1,14 @@
+module Checker
+
+// A constant checked against a singleton refinement: 3 <: {x | x = 3}.
+let three : x:int{x = 3} = 3
+
+// Identity on non-negatives: the argument's refinement must imply the result's.
+let nonneg : x:int{x >= 0} -> y:int{y >= 0} = fun a -> a
+
+// A pure assertion obligation.
+let ok = assert (1 + 1 = 2)
+
+// A call whose argument must satisfy a refined domain.
+val use_pos : n:int{n >= 0} -> int
+let call = use_pos 5
