@@ -22,12 +22,16 @@ let base_of_const : constant -> base_typ = function
   | C_int _ -> B_int | C_bool _ -> B_bool | C_float _ -> B_float
   | C_unit -> B_unit | C_string _ -> B_string
 
-(* {v:B | v = e} for a base type; functions are returned unchanged. *)
+(* Strengthen a base type with the fact [v = e], keeping its existing refinement;
+   functions are returned unchanged. *)
 let selfify (t : typ) (e : term) : typ =
   match t with
-  | T_refine { rbase; _ } ->
+  | T_refine { rv; rbase; rphi } ->
     let w = fresh_var "v" in
-    T_refine { rv = w; rbase; rphi = mk_eq (Tm_var w) e }
+    let eq = mk_eq (Tm_var w) e in
+    let phi = Subst.subst_term [ (rv, Tm_var w) ] rphi in
+    let rphi = if is_true phi then eq else mk_and phi eq in
+    T_refine { rv = w; rbase; rphi }
   | T_arrow _ -> t
 
 let singleton (b : base_typ) (e : term) : typ =
@@ -271,9 +275,13 @@ let check_module (m : modul) : Vc.t list =
         List.iter (fun dc -> Hashtbl.replace genv dc.dc_name.bname dc.dc_typ) ind.ind_ctors
       | Sig_val (l, sch) -> Hashtbl.replace genv l.bname sch
       | Sig_let lbs ->
+        (* a matching [val] (registered earlier) is the refined spec and wins; only
+           supply the shape-only [lb_scheme] when no [val] declared this name *)
         List.iter
           (fun lb -> match lb.lb_scheme with
-             | Some sch -> Hashtbl.replace genv lb.lb_name.vname sch
+             | Some sch ->
+               if not (Hashtbl.mem genv lb.lb_name.vname) then
+                 Hashtbl.replace genv lb.lb_name.vname sch
              | None -> ())
           lbs.lbs
       | Sig_assume (_, phi) -> module_axioms := !module_axioms @ [ phi ]
@@ -285,22 +293,30 @@ let check_module (m : modul) : Vc.t list =
       cur_range := se.sig_rng;
       match se.sig_el with
       | Sig_let lbs ->
-        (* bind the whole group's names so rec/mutual references resolve; these are
-           function-typed, so [to_scope_hyps] keeps them out of the VC scope *)
+        (* Check each definition against its *declared* type: the refined [val] spec
+           in [genv] when one exists, else the inferred (shape-only) [lb_scheme]. The
+           reflected [lb_scheme] has erased refinements, so it is only the fallback. *)
+        let decl_typ (lb : letbinding) : typ option =
+          match Hashtbl.find_opt genv lb.lb_name.vname with
+          | Some sch -> Some sch.ts_typ
+          | None -> Option.map (fun s -> s.ts_typ) lb.lb_scheme
+        in
         let named =
           List.filter_map
-            (fun lb -> match lb.lb_scheme with Some sch -> Some (lb, sch) | None -> None)
+            (fun lb -> match decl_typ lb with Some ty -> Some (lb, ty) | None -> None)
             lbs.lbs
         in
+        (* bind the group's names so rec/mutual references resolve; they are
+           function-typed, so [to_scope_hyps] keeps them out of the VC scope *)
         let env0 =
           if lbs.lb_rec then
-            List.fold_left (fun env (lb, sch) -> B_typed (lb.lb_name, sch.ts_typ) :: env) [] named
+            List.fold_left (fun env (lb, ty) -> B_typed (lb.lb_name, ty) :: env) [] named
           else []
         in
         List.concat_map
-          (fun (lb, sch) ->
+          (fun (lb, ty) ->
             cur_reason := Printf.sprintf "definition of %s" lb.lb_name.vname;
-            check env0 lb.lb_def sch.ts_typ)
+            check env0 lb.lb_def ty)
           named
       | Sig_pragma (P_check t) -> cur_reason := "#check"; snd (synth [] t)
       | _ -> [])

@@ -1,0 +1,24 @@
+
+module Prop8
+
+type nat = 
+  | Z: nat
+  | S: nat -> nat
+
+let rec add x y = match x with
+  | Z -> y
+  | S x' -> 
+    let p = add x' y in
+    S p
+
+let rec sub x y = match x with 
+  | Z -> Z
+  | S x' -> match y with
+    | Z -> x
+    | S y' -> sub x' y'
+
+val tip_eight: i:nat -> j:nat -> k:nat ->
+        Lemma(ensures sub (add i j) (add i k) = sub j k)
+let rec tip_eight i j k = match i with
+  | Z -> ()
+  | S i' -> tip_eight i' j k
