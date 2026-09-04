@@ -85,7 +85,7 @@ let vc_formula (vc : Vc.t) : term =
 
 (* declare-sort lines for the non-builtin sorts appearing in [scope], plus a
    declare-const for each scoped variable. *)
-let scope_decls (scope : (var * base_typ) list) : string list * string list =
+let scope_decls (naming : Smtlib.naming) (scope : (var * base_typ) list) : string list * string list =
   let seen : (string, unit) Hashtbl.t = Hashtbl.create 8 in
   let sort_lines = ref [] in
   let add_sort (b : base_typ) =
@@ -100,7 +100,7 @@ let scope_decls (scope : (var * base_typ) list) : string list * string list =
   let const_lines =
     List.map
       (fun (v, b) -> add_sort b;
-        Printf.sprintf "(declare-const %s %s)" (Smtlib.smt_var v) (Smtlib.sort_of_base b))
+        Printf.sprintf "(declare-const %s %s)" (Smtlib.smt_var naming v) (Smtlib.sort_of_base b))
       scope
   in
   (List.rev !sort_lines, const_lines)
@@ -144,15 +144,16 @@ let dedup (lines : string list) : string list =
 
 let build_query (m : modul) (ret_sort : string -> base_typ) (vc : Vc.t) : string =
   let vc = Skolem.skolemize vc in                    (* hoist ∃-hyps to scope consts *)
+  let naming = Smtlib.make_naming (List.map fst vc.Vc.scope) in  (* readable model names *)
   let anf_f = Anf.normalize (vc_formula vc) in
   let f = Relabs.transform ret_sort (Nnf.normalize anf_f) in     (* the negated VC *)
   let mat = materialization ret_sort anf_f in                    (* auto-instantiation *)
-  let sort_decls, const_decls = scope_decls vc.Vc.scope in
+  let sort_decls, const_decls = scope_decls naming vc.Vc.scope in
   let final_axioms = global_final_axioms m in
   let raw_axioms = List.map (full_transform ret_sort) (global_raw_axioms m @ vc.Vc.axioms) in
   let buf = Buffer.create 1024 in
   let line s = Buffer.add_string buf s; Buffer.add_char buf '\n' in
-  let assert_ a = line (Printf.sprintf "(assert %s)" (Smtlib.term_to_sexpr a)) in
+  let assert_ a = line (Printf.sprintf "(assert %s)" (Smtlib.term_to_sexpr naming a)) in
   line "(set-logic ALL)";
   line "(declare-sort Unit 0)";
   line "(declare-const unit_val Unit)";

@@ -27,8 +27,19 @@ val sort_of_base : Ast.base_typ -> string
 (* Does [sort_of_base b] name a builtin sort (needs no declare-sort)? *)
 val is_builtin_sort : Ast.base_typ -> bool
 
-(* A stable, SMT-safe identifier for a term variable (name + vid). *)
-val smt_var : Ast.var -> string
+(* A per-query naming for term variables (vid -> chosen readable symbol). Variables
+   not in the table render as the default [name_vid]. *)
+type naming
 
-(* Render a (pipeline-normalised) term as an SMT-LIB2 s-expression string. *)
-val term_to_sexpr : Ast.term -> string
+(* Build a naming for a set of variables (a VC's scope constants): each prints with
+   its bare source name where that is unique, quoted (|name|) if it is not a valid
+   simple symbol, and suffixed with the vid only to break an actual clash. *)
+val make_naming : Ast.var list -> naming
+
+(* The SMT symbol for a term variable under [naming]: the table's readable symbol if
+   present, else a stable, SMT-safe [name_vid] identifier. *)
+val smt_var : naming -> Ast.var -> string
+
+(* Render a (pipeline-normalised) term as an SMT-LIB2 s-expression string, using
+   [naming] for its variables. *)
+val term_to_sexpr : naming -> Ast.term -> string

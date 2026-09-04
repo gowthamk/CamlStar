@@ -36,14 +36,80 @@ let sanitize (s : string) : string =
     then c else '_')
     s
 
-let smt_var (v : var) : string =
-  let nm =
-    if String.length v.vname > 0
-       && ((v.vname.[0] >= 'a' && v.vname.[0] <= 'z') || (v.vname.[0] >= 'A' && v.vname.[0] <= 'Z'))
-    then sanitize v.vname
-    else "x"
-  in
+(* A per-query map from a variable's unique id to a chosen, human-readable SMT
+   symbol. Only the variables placed in the table (a VC's scope constants) get a
+   readable name; every other variable falls back to [name_vid] in [smt_var]. *)
+type naming = (int, string) Hashtbl.t
+
+let starts_alpha (s : string) : bool =
+  String.length s > 0
+  && ((s.[0] >= 'a' && s.[0] <= 'z') || (s.[0] >= 'A' && s.[0] <= 'Z'))
+
+(* The default rendering: a stable, globally-unique [name_vid] identifier. *)
+let default_var (v : var) : string =
+  let nm = if starts_alpha v.vname then sanitize v.vname else "x" in
   Printf.sprintf "%s_%d" nm v.vid
+
+(* Characters allowed (besides letters/digits) in an SMT-LIB simple symbol. *)
+let simple_special = "+-/*=%?!.$_~&^<>@"
+
+let is_simple_symbol (s : string) : bool =
+  String.length s > 0
+  && not (s.[0] >= '0' && s.[0] <= '9')
+  && String.for_all
+       (fun c ->
+         (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+         || String.contains simple_special c)
+       s
+
+(* Render [s] as an SMT symbol: bare when it is a valid simple symbol, else as a
+   quoted symbol |s| (which admits any char except '|' and '\\'). *)
+let emit_symbol (s : string) : string =
+  if is_simple_symbol s then s
+  else "|" ^ String.map (fun c -> if c = '|' || c = '\\' then '_' else c) s ^ "|"
+
+let smt_var (naming : naming) (v : var) : string =
+  match Hashtbl.find_opt naming v.vid with
+  | Some s -> s
+  | None -> default_var v
+
+(* Build a naming for a set of variables (a VC's scope): a base name used by a
+   single variable prints bare (its source spelling, quoted if needed); a base name
+   shared by several is disambiguated with the vid. A final guard forces the vid
+   suffix on any symbols that still coincide, keeping the map injective. *)
+let make_naming (vars : var list) : naming =
+  let seen = Hashtbl.create 16 in
+  let uniq =
+    List.filter
+      (fun v -> if Hashtbl.mem seen v.vid then false else (Hashtbl.add seen v.vid (); true))
+      vars
+  in
+  let base (v : var) : string = if String.length v.vname > 0 then v.vname else "x" in
+  let count = Hashtbl.create 16 in
+  List.iter
+    (fun v -> let b = base v in
+      Hashtbl.replace count b (1 + (try Hashtbl.find count b with Not_found -> 0)))
+    uniq;
+  let tbl : naming = Hashtbl.create 16 in
+  List.iter
+    (fun v ->
+      let b = base v in
+      let raw = if Hashtbl.find count b = 1 then b else Printf.sprintf "%s_%d" b v.vid in
+      Hashtbl.replace tbl v.vid (emit_symbol raw))
+    uniq;
+  (* injectivity guard: if two distinct vids still map to the same symbol, force the
+     vid suffix on all of them *)
+  let sym_count = Hashtbl.create 16 in
+  Hashtbl.iter
+    (fun _ s -> Hashtbl.replace sym_count s (1 + (try Hashtbl.find sym_count s with Not_found -> 0)))
+    tbl;
+  List.iter
+    (fun v ->
+      let s = Hashtbl.find tbl v.vid in
+      if Hashtbl.find sym_count s > 1 then
+        Hashtbl.replace tbl v.vid (emit_symbol (Printf.sprintf "%s_%d" (base v) v.vid)))
+    uniq;
+  tbl
 
 let sort_of_base (b : base_typ) : string =
   match b with
@@ -74,19 +140,19 @@ let const_sexpr (c : constant) : string =
 let rec head_spine (t : term) (acc : term list) : term * term list =
   match t with Tm_app (f, a) -> head_spine f (a :: acc) | _ -> (t, acc)
 
-let rec go (t : term) : string =
+let rec go (naming : naming) (t : term) : string =
   match t with
   | Tm_const c -> const_sexpr c
-  | Tm_var v -> smt_var v
+  | Tm_var v -> smt_var naming v
   | Tm_fvar l -> sanitize l.bname            (* nullary symbol: constant / 0-ary constructor *)
   | Tm_app _ ->
     let head, args = head_spine t [] in
     (match head with
      | Tm_fvar l when is_interpreted l.bname ->
-       Printf.sprintf "(%s %s)" (smt_op l.bname) (String.concat " " (List.map go args))
+       Printf.sprintf "(%s %s)" (smt_op l.bname) (String.concat " " (List.map (go naming) args))
      | Tm_fvar l ->
        (* uninterpreted application: user relation (f_rel), or a constructor app *)
-       Printf.sprintf "(%s %s)" (sanitize l.bname) (String.concat " " (List.map go args))
+       Printf.sprintf "(%s %s)" (sanitize l.bname) (String.concat " " (List.map (go naming) args))
      | _ -> failwith "smtlib: application head is not a symbol")
   | Tm_quant { qk; qv; qty; qbody } ->
     let sort = match qty with
@@ -95,10 +161,10 @@ let rec go (t : term) : string =
       | None -> failwith "smtlib: quantifier without a sort"
     in
     let q = match qk with Forall -> "forall" | Exists -> "exists" in
-    Printf.sprintf "(%s ((%s %s)) %s)" q (smt_var qv) sort (go qbody)
-  | Tm_ascribed (e, _) -> go e
+    Printf.sprintf "(%s ((%s %s)) %s)" q (smt_var naming qv) sort (go naming qbody)
+  | Tm_ascribed (e, _) -> go naming e
   | Tm_abs _ -> failwith "smtlib: unexpected lambda in formula"
   | Tm_let _ -> failwith "smtlib: unexpected let in formula (should be relabs'd away)"
   | Tm_match _ -> failwith "smtlib: unexpected match in formula"
 
-let term_to_sexpr (t : term) : string = go t
+let term_to_sexpr (naming : naming) (t : term) : string = go naming t
