@@ -1,0 +1,29 @@
+module Escape
+
+// Each of f, g, h adds one.
+val f: a:int -> v:int{v = a + 1}
+let f a = a + 1
+
+val g: a:int -> v:int{v = a + 1}
+let g a = a + 1
+
+val h: a:int -> v:int{v = a + 1}
+let h a = a + 1
+
+// The then-branch binds z and y *inside* the branch; their scope does not extend to
+// the use of m.  Synthesizing m's type must existentially close over z, y (and carry
+// each branch's discriminator), then the two branches join as a disjunction.  The
+// backend skolemizes the resulting positive existentials to fresh constants.
+//
+//   then:  z = f x, y = g z, result = h y  =>  result = x + 3  (>= x)
+//   else:  result = x                      =>  result = x      (>= x)
+val use_if: x:int -> c:bool -> r:int{r >= x}
+let use_if x c =
+  let m = if c then
+            let z = f x in
+            let y = g z in
+            h y
+          else
+            x
+  in
+  m

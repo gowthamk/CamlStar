@@ -1,0 +1,43 @@
+{
+  "name": "camlstar",
+  "displayName": "Caml* (Caml Star)",
+  "description": "Syntax highlighting for the Caml* language (.cst)",
+  "version": "0.1.0",
+  "publisher": "camlstar",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "camlstar",
+    "caml*",
+    "fstar",
+    "refinement types"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "camlstar",
+        "aliases": [
+          "Caml*",
+          "Caml Star",
+          "camlstar"
+        ],
+        "extensions": [
+          ".cst"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "camlstar",
+        "scopeName": "source.camlstar",
+        "path": "./syntaxes/camlstar.tmLanguage.json"
+      }
+    ]
+  }
+}

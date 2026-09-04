@@ -1,0 +1,4 @@
+.vscode/**
+.gitignore
+sample.cst
+**/*.map

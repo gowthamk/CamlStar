@@ -1,0 +1,159 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Caml*",
+  "scopeName": "source.camlstar",
+  "patterns": [
+    { "include": "#comment-block" },
+    { "include": "#comment-line" },
+    { "include": "#string" },
+    { "include": "#pragma" },
+    { "include": "#attribute" },
+    { "include": "#module-decl" },
+    { "include": "#let-binding" },
+    { "include": "#val-binding" },
+    { "include": "#type-binding" },
+    { "include": "#keyword-control" },
+    { "include": "#keyword-decl" },
+    { "include": "#modifier" },
+    { "include": "#lemma" },
+    { "include": "#boolean" },
+    { "include": "#primitive-type" },
+    { "include": "#number" },
+    { "include": "#tyvar" },
+    { "include": "#constructor" },
+    { "include": "#operator" }
+  ],
+  "repository": {
+    "comment-block": {
+      "name": "comment.block.camlstar",
+      "begin": "\\(\\*",
+      "end": "\\*\\)",
+      "patterns": [
+        { "include": "#comment-block" }
+      ]
+    },
+    "comment-line": {
+      "name": "comment.line.double-slash.camlstar",
+      "match": "//.*$"
+    },
+    "string": {
+      "name": "string.quoted.double.camlstar",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.camlstar",
+          "match": "\\\\[ntr\"\\\\]"
+        }
+      ]
+    },
+    "pragma": {
+      "name": "keyword.control.directive.camlstar",
+      "match": "#(?:set-options|push-options|pop-options|check|eval)\\b"
+    },
+    "attribute": {
+      "name": "meta.attribute.camlstar",
+      "begin": "\\[@@",
+      "end": "\\]",
+      "applyEndPatternLast": true,
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.attribute.camlstar" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.attribute.camlstar" }
+      },
+      "patterns": [
+        { "include": "#attribute-args" },
+        { "include": "#number" },
+        {
+          "name": "entity.name.tag.attribute.camlstar",
+          "match": "[A-Za-z_][A-Za-z0-9_']*"
+        }
+      ]
+    },
+    "attribute-args": {
+      "begin": "\\[",
+      "end": "\\]",
+      "patterns": [
+        { "include": "#number" }
+      ]
+    },
+    "module-decl": {
+      "match": "(\\bmodule\\b)\\s+([A-Z][A-Za-z0-9_'.]*)",
+      "captures": {
+        "1": { "name": "keyword.other.camlstar" },
+        "2": { "name": "entity.name.namespace.camlstar" }
+      }
+    },
+    "let-binding": {
+      "match": "(\\blet\\b)(?:\\s+(\\brec\\b))?\\s+([a-z_][A-Za-z0-9_']*)",
+      "captures": {
+        "1": { "name": "keyword.other.camlstar" },
+        "2": { "name": "keyword.other.camlstar" },
+        "3": { "name": "entity.name.function.camlstar" }
+      }
+    },
+    "val-binding": {
+      "match": "(\\bval\\b)\\s+([a-z_][A-Za-z0-9_']*)",
+      "captures": {
+        "1": { "name": "keyword.other.camlstar" },
+        "2": { "name": "entity.name.function.camlstar" }
+      }
+    },
+    "type-binding": {
+      "match": "(\\btype\\b)\\s+([a-z_][A-Za-z0-9_']*)",
+      "captures": {
+        "1": { "name": "keyword.other.camlstar" },
+        "2": { "name": "entity.name.type.camlstar" }
+      }
+    },
+    "keyword-control": {
+      "name": "keyword.control.camlstar",
+      "match": "\\b(match|with|if|then|else|when|fun|forall|exists|requires|ensures|assert)\\b"
+    },
+    "keyword-decl": {
+      "name": "keyword.other.camlstar",
+      "match": "\\b(module|let|rec|and|in|val|type|assume)\\b"
+    },
+    "modifier": {
+      "name": "storage.modifier.camlstar",
+      "match": "\\b(private|irreducible|unfold|noeq|logic)\\b"
+    },
+    "lemma": {
+      "name": "keyword.other.lemma.camlstar",
+      "match": "\\bLemma\\b"
+    },
+    "boolean": {
+      "name": "constant.language.boolean.camlstar",
+      "match": "\\b(true|false)\\b"
+    },
+    "primitive-type": {
+      "name": "support.type.primitive.camlstar",
+      "match": "\\b(int|bool|float|unit|string)\\b"
+    },
+    "number": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.camlstar",
+          "match": "\\b[0-9]+\\.[0-9]*([eE][+-]?[0-9]+)?|\\b[0-9]+[eE][+-]?[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.camlstar",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "tyvar": {
+      "name": "variable.other.generic.camlstar",
+      "match": "'[A-Za-z][A-Za-z0-9_']*"
+    },
+    "constructor": {
+      "name": "entity.name.type.constructor.camlstar",
+      "match": "\\b[A-Z][A-Za-z0-9_']*\\b"
+    },
+    "operator": {
+      "name": "keyword.operator.camlstar",
+      "match": "<==>|==>|<:|->|/\\\\|\\\\/|==|<>|<=|>=|~|\\+|\\*|%|/|-|=|<|>|:|\\||\\.|;"
+    }
+  }
+}

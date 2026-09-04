@@ -1,4 +1,3 @@
-
 module Prop8
 
 type nat = 
