@@ -52,7 +52,7 @@ let () =
            (fun (vc, v) ->
              (match v with
               | Smt.Verified -> incr verified
-              | Smt.Failed -> incr failed
+              | Smt.Failed _ -> incr failed
               | Smt.Unknown -> incr unknown
               | Smt.Solver_error _ -> incr errored);
              if !solve then

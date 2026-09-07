@@ -1,6 +1,7 @@
 (library
  (name camlstar)
  (wrapped false)
+ (libraries z3)
  (modules ast lexer parser parse unify subst shape infer vc check smtlib axioms anf nnf relabs skolem smt))
 
 (ocamllex lexer)

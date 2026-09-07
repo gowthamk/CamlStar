@@ -2,14 +2,14 @@
 
 open Ast
 
-type verdict = Verified | Failed | Unknown | Solver_error of string
+type verdict = Verified | Failed of Z3.Model.model | Unknown | Solver_error of string
 
-(* [Failed] = z3 returned sat: a counterexample to the (negated) VC. Under
-   relational abstraction the relations *over*approximate the functions (no
+(* [Failed m] = z3 returned sat with model [m]: a counterexample to the (negated) VC.
+   Under relational abstraction the relations *over*approximate the functions (no
    totality is asserted, to stay in EPR), so such a counterexample may be spurious
-   rather than a genuine refutation. *)
+   rather than a genuine refutation. The model is carried for later reconstruction. *)
 let string_of_verdict = function
-  | Verified -> "verified" | Failed -> "counterexample" | Unknown -> "unknown"
+  | Verified -> "verified" | Failed _ -> "counterexample" | Unknown -> "unknown"
   | Solver_error s -> "solver error: " ^ s
 
 (* ===== the transform pipeline =====
@@ -105,36 +105,37 @@ let scope_decls (naming : Smtlib.naming) (scope : (var * base_typ) list) : strin
   in
   (List.rev !sort_lines, const_lines)
 
-(* ===== z3 invocation ===== *)
-
-let z3_bin () = try Sys.getenv "CAMLSTAR_Z3" with Not_found -> "z3"
-
-let read_file (path : string) : string =
-  let ic = open_in path in
-  let n = in_channel_length ic in
-  let s = really_input_string ic n in
-  close_in ic; s
+(* ===== z3 invocation (in-process, via the OCaml API) =====
+   We keep emitting the query as SMT-LIB2 text (so [--dump-smt] and the whole
+   ANF/NNF/relabs pipeline are unchanged) and simply hand that text to Z3 in-process
+   with [parse_smtlib2_string], rather than shelling out to the [z3] binary. The
+   payoff is that on [sat] we get a [Z3.Model.model] back — the structured
+   counterexample — instead of scraping text. Z3 must be 4.13.3, matching the
+   [z3.4.13.3] opam bindings and the solver F* itself uses. *)
 
 let run_z3 (query : string) : verdict =
-  let qf = Filename.temp_file "camlstar" ".smt2" in
-  let out = Filename.temp_file "camlstar" ".out" in
-  let oc = open_out qf in output_string oc query; close_out oc;
-  let cmd = Printf.sprintf "%s -smt2 %s > %s 2>&1" (z3_bin ()) (Filename.quote qf) (Filename.quote out) in
-  let _ = Sys.command cmd in
-  let output = read_file out in
-  (try Sys.remove qf with _ -> ());
-  (try Sys.remove out with _ -> ());
-  let lines = String.split_on_char '\n' output in
-  let verdict = List.fold_left
-      (fun acc line ->
-        match acc, String.trim line with
-        | None, "unsat" -> Some Verified
-        | None, "sat" -> Some Failed
-        | None, "unknown" -> Some Unknown
-        | _ -> acc)
-      None lines
-  in
-  match verdict with Some v -> v | None -> Solver_error (String.trim output)
+  (* A fresh context per VC: each query redeclares its own sorts/relations/consts, so
+     an isolated context avoids cross-VC symbol clashes. The returned [model] keeps
+     its context alive (the OCaml bindings hold the reference), so it is safe to hand
+     back out of here. *)
+  let ctx = Z3.mk_context [ ("model", "true") ] in
+  try
+    (* [parse_smtlib2_string] processes the declarations and returns the assertions
+       as an AST vector; it does not execute [(check-sat)] — we drive that ourselves.
+       All symbols are declared inline in [query], so the four decl/sort arrays are
+       empty. *)
+    let asts = Z3.SMT.parse_smtlib2_string ctx query [] [] [] [] in
+    let exprs = Z3.AST.ASTVector.to_expr_list asts in
+    let solver = Z3.Solver.mk_solver ctx None in
+    Z3.Solver.add solver exprs;
+    match Z3.Solver.check solver [] with
+    | Z3.Solver.UNSATISFIABLE -> Verified
+    | Z3.Solver.SATISFIABLE ->
+      (match Z3.Solver.get_model solver with
+       | Some m -> Failed m
+       | None -> Solver_error "solver returned sat but produced no model")
+    | Z3.Solver.UNKNOWN -> Unknown
+  with Z3.Error msg -> Solver_error msg
 
 (* ===== query assembly ===== *)
 
@@ -157,12 +158,18 @@ let build_query (m : modul) (ret_sort : string -> base_typ) (vc : Vc.t) : string
   line "(set-logic ALL)";
   line "(declare-sort Unit 0)";
   line "(declare-const unit_val Unit)";
+  line ";; Sorts";
   List.iter line (dedup (global_sort_decls m @ sort_decls));   (* sorts once *)
+  line ";; Relations";
   List.iter line (dedup (global_rel_decls m));
+  line ";; Constants";
   List.iter line const_decls;
+  line ";; Axioms -- Functionality and Injectivity";
   List.iter assert_ final_axioms;
+  line ";; Axioms -- Definitional";
   List.iter assert_ raw_axioms;
   (match mat with Some a -> assert_ a | None -> ());
+  line ";; Negated goal";
   assert_ f;
   line "(check-sat)";
   Buffer.contents buf
