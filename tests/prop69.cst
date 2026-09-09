@@ -1,0 +1,25 @@
+module Prop69
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec add x y = match x with
+  | Z -> y
+  | S x' -> S (add x' y)
+
+let rec le x y = match x with
+  | Z -> true
+  | S x' -> (match y with
+             | Z -> false
+             | S y' -> le x' y')
+
+val add_succ_r : x:nat -> y:nat -> Lemma(ensures add x (S y) = S (add x y))
+let rec add_succ_r x y = match x with
+  | Z -> ()
+  | S x' -> add_succ_r x' y
+
+val tip_69 : n:nat -> m:nat -> Lemma(ensures le n (add m n))
+let rec tip_69 n m = match n with
+  | Z -> ()
+  | S n' -> let u1 = add_succ_r m n' in tip_69 n' m

@@ -1,4 +1,4 @@
-module Prop8
+module Prop08
 
 type nat = 
   | Z: nat

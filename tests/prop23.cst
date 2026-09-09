@@ -1,0 +1,20 @@
+module Prop23
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec max x y = match x with
+  | Z -> y
+  | S x' -> (match y with
+             | Z -> x
+             | S y' -> S (max x' y'))
+
+val tip_23 : a:nat -> b:nat -> Lemma(ensures max a b = max b a)
+let rec tip_23 a b = match a with
+  | Z -> (match b with
+          | Z -> ()
+          | S b' -> ())
+  | S a' -> (match b with
+             | Z -> ()
+             | S b' -> tip_23 a' b')

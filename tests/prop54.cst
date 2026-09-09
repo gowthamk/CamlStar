@@ -1,0 +1,35 @@
+module Prop54
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec add x y = match x with
+  | Z -> y
+  | S x' -> S (add x' y)
+
+let rec sub x y = match x with
+  | Z -> Z
+  | S x' -> (match y with
+             | Z -> x
+             | S y' -> sub x' y')
+
+val sub_zero : x:nat -> Lemma(ensures sub x Z = x)
+let sub_zero x = match x with
+  | Z -> ()
+  | S x' -> ()
+
+val add_zero : x:nat -> Lemma(ensures add x Z = x)
+let rec add_zero x = match x with
+  | Z -> ()
+  | S x' -> add_zero x'
+
+val add_succ_r : x:nat -> y:nat -> Lemma(ensures add x (S y) = S (add x y))
+let rec add_succ_r x y = match x with
+  | Z -> ()
+  | S x' -> add_succ_r x' y
+
+val tip_54 : m:nat -> n:nat -> Lemma(ensures sub (add m n) n = m)
+let rec tip_54 m n = match n with
+  | Z -> let u1 = add_zero m in sub_zero m
+  | S n' -> let u1 = add_succ_r m n' in tip_54 m n'

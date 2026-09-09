@@ -1,0 +1,20 @@
+module Prop10
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec add x y = match x with
+  | Z -> y
+  | S x' -> S (add x' y)
+
+let rec sub x y = match x with
+  | Z -> Z
+  | S x' -> (match y with
+             | Z -> x
+             | S y' -> sub x' y')
+
+val tip_ten : m:nat -> Lemma(ensures sub m m = Z)
+let rec tip_ten m = match m with
+  | Z -> ()
+  | S m' -> tip_ten m'

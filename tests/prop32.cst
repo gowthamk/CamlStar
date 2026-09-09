@@ -1,0 +1,20 @@
+module Prop32
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec min x y = match x with
+  | Z -> Z
+  | S x' -> (match y with
+             | Z -> Z
+             | S y' -> S (min x' y'))
+
+val tip_32 : a:nat -> b:nat -> Lemma(ensures min a b = min b a)
+let rec tip_32 a b = match a with
+  | Z -> (match b with
+          | Z -> ()
+          | S b' -> ())
+  | S a' -> (match b with
+             | Z -> ()
+             | S b' -> tip_32 a' b')

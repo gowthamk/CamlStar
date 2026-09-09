@@ -55,8 +55,12 @@ let () =
               | Smt.Failed _ -> incr failed
               | Smt.Unknown -> incr unknown
               | Smt.Solver_error _ -> incr errored);
-             if !solve then
-               Printf.printf "  [%s] %s\n" (Smt.string_of_verdict v) vc.Vc.reason)
+             if !solve then begin
+               Printf.printf "  [%s] %s\n" (Smt.string_of_verdict v) vc.Vc.reason;
+               match v with
+               | Smt.Failed cex -> Printf.printf "%s\n" (Cex.to_json cex)
+               | _ -> ()
+             end)
            results;
          Printf.printf "%d verified, %d counterexamples, %d unknown, %d errors (of %d VCs)\n"
            !verified !failed !unknown !errored (List.length vcs);

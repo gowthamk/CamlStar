@@ -1,0 +1,40 @@
+module Prop47
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type tree 'a =
+  | Leaf : tree 'a
+  | Node : tree 'a -> 'a -> tree 'a -> tree 'a
+
+let rec max x y = match x with
+  | Z -> y
+  | S x' -> (match y with
+             | Z -> x
+             | S y' -> S (max x' y'))
+
+let rec height t = match t with
+  | Leaf -> Z
+  | Node l e r -> S (max (height l) (height r))
+
+let rec mirror t = match t with
+  | Leaf -> Leaf
+  | Node l e r -> Node (mirror r) e (mirror l)
+
+val max_comm : a:nat -> b:nat -> Lemma(ensures max a b = max b a)
+let rec max_comm a b = match a with
+  | Z -> (match b with
+          | Z -> ()
+          | S b' -> ())
+  | S a' -> (match b with
+             | Z -> ()
+             | S b' -> max_comm a' b')
+
+val tip_47 : t:tree 'a -> Lemma(ensures height (mirror t) = height t)
+let rec tip_47 t = match t with
+  | Leaf -> ()
+  | Node l e r ->
+    let u1 = tip_47 l in
+    let u2 = tip_47 r in
+    max_comm (height l) (height r)

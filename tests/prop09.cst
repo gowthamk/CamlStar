@@ -1,0 +1,22 @@
+module Prop09
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec add x y = match x with
+  | Z -> y
+  | S x' -> S (add x' y)
+
+let rec sub x y = match x with
+  | Z -> Z
+  | S x' -> (match y with
+             | Z -> x
+             | S y' -> sub x' y')
+
+val tip_nine : i:nat -> j:nat -> k:nat -> Lemma(ensures sub (sub i j) k = sub i (add j k))
+let rec tip_nine i j k = match i with
+  | Z -> ()
+  | S i' -> (match j with
+             | Z -> ()
+             | S j' -> tip_nine i' j' k)

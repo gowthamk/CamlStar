@@ -8,7 +8,7 @@
 
 type verdict =
   | Verified
-  | Failed of Z3.Model.model    (* sat: the counterexample model, for reconstruction *)
+  | Failed of Cex.t             (* sat: the reconstructed counterexample *)
   | Unknown
   | Solver_error of string
 

@@ -1,0 +1,24 @@
+module Prop17
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec le x y = match x with
+  | Z -> true
+  | S x' -> (match y with
+             | Z -> false
+             | S y' -> le x' y')
+
+let rec eq_nat x y = match x with
+  | Z -> (match y with
+          | Z -> true
+          | S y' -> false)
+  | S x' -> (match y with
+             | Z -> false
+             | S y' -> eq_nat x' y')
+
+val tip_17 : n:nat -> Lemma(ensures le n Z = eq_nat n Z)
+let tip_17 n = match n with
+  | Z -> ()
+  | S n' -> ()

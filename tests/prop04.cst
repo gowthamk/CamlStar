@@ -1,0 +1,29 @@
+module Prop04
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type natlist =
+  | Nil : natlist
+  | Cons : nat -> natlist -> natlist
+
+let rec eq_nat x y = match x with
+  | Z -> (match y with
+          | Z -> true
+          | S y' -> false)
+  | S x' -> (match y with
+             | Z -> false
+             | S y' -> eq_nat x' y')
+
+let rec count x xs = match xs with
+  | Nil -> Z
+  | Cons h t -> 
+    let p = eq_nat x h in
+    if p then S (count x t) else count x t
+
+
+val tip_04 : n:nat -> xs:natlist -> Lemma(ensures S (count n xs) = count n (Cons n xs))
+let tip_04 n xs = match xs with
+  | Nil -> ()
+  | Cons x xs' -> tip_04 n xs' 

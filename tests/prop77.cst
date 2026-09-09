@@ -1,0 +1,41 @@
+module Prop77
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type natlist =
+  | Nil : natlist
+  | Cons : nat -> natlist -> natlist
+
+let rec le x y = match x with
+  | Z -> true
+  | S x' -> (match y with
+             | Z -> false
+             | S y' -> le x' y')
+
+let rec insort x xs = match xs with
+  | Nil -> Cons x Nil
+  | Cons h t -> let p = le x h in if p then Cons x (Cons h t) else Cons h (insort x t)
+
+let rec sorted xs = match xs with
+  | Nil -> true
+  | Cons h t -> (match t with
+                 | Nil -> true
+                 | Cons h2 t2 -> let p = le h h2 in if p then sorted (Cons h2 t2) else false)
+
+val le_neg : x:nat -> y:nat -> Lemma(ensures ~(le x y) ==> le y x)
+let rec le_neg x y = match x with
+  | Z -> ()
+  | S x' -> (match y with
+             | Z -> ()
+             | S y' -> le_neg x' y')
+
+val tip_77 : x:nat -> xs:natlist -> Lemma(ensures sorted xs ==> sorted (insort x xs))
+let rec tip_77 x xs = match xs with
+  | Nil -> ()
+  | Cons h t ->
+    let u1 = le_neg x h in
+    (match t with
+     | Nil -> ()
+     | Cons h2 t2 -> tip_77 x t)

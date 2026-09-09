@@ -1,0 +1,58 @@
+module Prop52
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type natlist =
+  | Nil : natlist
+  | Cons : nat -> natlist -> natlist
+
+let rec eq_nat x y = match x with
+  | Z -> (match y with
+          | Z -> true
+          | S y' -> false)
+  | S x' -> (match y with
+             | Z -> false
+             | S y' -> eq_nat x' y')
+
+let rec add x y = match x with
+  | Z -> y
+  | S x' -> S (add x' y)
+
+let rec count x xs = match xs with
+  | Nil -> Z
+  | Cons h t -> let p = eq_nat x h in if p then S (count x t) else count x t
+
+let rec app x y = match x with
+  | Nil -> y
+  | Cons h t -> Cons h (app t y)
+
+let rec rev x = match x with
+  | Nil -> Nil
+  | Cons h t -> app (rev t) (Cons h Nil)
+
+val add_zero : x:nat -> Lemma(ensures add x Z = x)
+let rec add_zero x = match x with
+  | Z -> ()
+  | S x' -> add_zero x'
+
+val add_one : x:nat -> Lemma(ensures add x (S Z) = S x)
+let rec add_one x = match x with
+  | Z -> ()
+  | S x' -> add_one x'
+
+val count_app : n:nat -> xs:natlist -> ys:natlist ->
+        Lemma(ensures count n (app xs ys) = add (count n xs) (count n ys))
+let rec count_app n xs ys = match xs with
+  | Nil -> ()
+  | Cons h t -> count_app n t ys
+
+val tip_52 : n:nat -> xs:natlist -> Lemma(ensures count n (rev xs) = count n xs)
+let rec tip_52 n xs = match xs with
+  | Nil -> ()
+  | Cons h t ->
+    let u1 = count_app n (rev t) (Cons h Nil) in
+    let u2 = add_one (count n t) in
+    let u3 = add_zero (count n t) in
+    tip_52 n t

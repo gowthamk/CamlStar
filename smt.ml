@@ -2,12 +2,12 @@
 
 open Ast
 
-type verdict = Verified | Failed of Z3.Model.model | Unknown | Solver_error of string
+type verdict = Verified | Failed of Cex.t | Unknown | Solver_error of string
 
-(* [Failed m] = z3 returned sat with model [m]: a counterexample to the (negated) VC.
-   Under relational abstraction the relations *over*approximate the functions (no
-   totality is asserted, to stay in EPR), so such a counterexample may be spurious
-   rather than a genuine refutation. The model is carried for later reconstruction. *)
+(* [Failed cex] = z3 returned sat: a counterexample to the (negated) VC, reconstructed
+   into a source-level [Cex.t]. Under relational abstraction the relations
+   *over*approximate the functions (no totality is asserted, to stay in EPR), so such
+   a counterexample may be spurious rather than a genuine refutation. *)
 let string_of_verdict = function
   | Verified -> "verified" | Failed _ -> "counterexample" | Unknown -> "unknown"
   | Solver_error s -> "solver error: " ^ s
@@ -113,11 +113,16 @@ let scope_decls (naming : Smtlib.naming) (scope : (var * base_typ) list) : strin
    counterexample — instead of scraping text. Z3 must be 4.13.3, matching the
    [z3.4.13.3] opam bindings and the solver F* itself uses. *)
 
-let run_z3 (query : string) : verdict =
+(* internal: the solver's raw answer, carrying the model on sat (reconstruction into
+   the public [verdict] happens in [solve_module], where the module/vc/naming are in
+   scope) *)
+type raw = R_verified | R_sat of Z3.context * Z3.Model.model | R_unknown | R_error of string
+
+let run_z3 (query : string) : raw =
   (* A fresh context per VC: each query redeclares its own sorts/relations/consts, so
      an isolated context avoids cross-VC symbol clashes. The returned [model] keeps
-     its context alive (the OCaml bindings hold the reference), so it is safe to hand
-     back out of here. *)
+     its context alive (the OCaml bindings hold the reference), so it is safe to use
+     it after this returns. *)
   let ctx = Z3.mk_context [ ("model", "true") ] in
   try
     (* [parse_smtlib2_string] processes the declarations and returns the assertions
@@ -129,13 +134,13 @@ let run_z3 (query : string) : verdict =
     let solver = Z3.Solver.mk_solver ctx None in
     Z3.Solver.add solver exprs;
     match Z3.Solver.check solver [] with
-    | Z3.Solver.UNSATISFIABLE -> Verified
+    | Z3.Solver.UNSATISFIABLE -> R_verified
     | Z3.Solver.SATISFIABLE ->
       (match Z3.Solver.get_model solver with
-       | Some m -> Failed m
-       | None -> Solver_error "solver returned sat but produced no model")
-    | Z3.Solver.UNKNOWN -> Unknown
-  with Z3.Error msg -> Solver_error msg
+       | Some m -> R_sat (ctx, m)
+       | None -> R_error "solver returned sat but produced no model")
+    | Z3.Solver.UNKNOWN -> R_unknown
+  with Z3.Error msg -> R_error msg
 
 (* ===== query assembly ===== *)
 
@@ -143,7 +148,7 @@ let dedup (lines : string list) : string list =
   let seen : (string, unit) Hashtbl.t = Hashtbl.create 32 in
   List.filter (fun l -> if Hashtbl.mem seen l then false else (Hashtbl.add seen l (); true)) lines
 
-let build_query (m : modul) (ret_sort : string -> base_typ) (vc : Vc.t) : string =
+let build_query (m : modul) (ret_sort : string -> base_typ) (vc : Vc.t) : string * Smtlib.naming =
   let vc = Skolem.skolemize vc in                    (* hoist ∃-hyps to scope consts *)
   let naming = Smtlib.make_naming (List.map fst vc.Vc.scope) in  (* readable model names *)
   let anf_f = Anf.normalize (vc_formula vc) in
@@ -172,7 +177,7 @@ let build_query (m : modul) (ret_sort : string -> base_typ) (vc : Vc.t) : string
   line ";; Negated goal";
   assert_ f;
   line "(check-sat)";
-  Buffer.contents buf
+  (Buffer.contents buf, naming)
 
 let sanitize_file (s : string) : string =
   String.map (fun c ->
@@ -183,11 +188,17 @@ let solve_module ?dump_dir (m : modul) (vcs : Vc.t list) : (Vc.t * verdict) list
   let ret_sort = make_ret_sort m in
   List.mapi
     (fun i vc ->
-      let query = build_query m ret_sort vc in
+      let query, naming = build_query m ret_sort vc in
       (match dump_dir with
        | Some dir ->
          let fn = Printf.sprintf "%s/%s_%d.smt2" dir (sanitize_file vc.Vc.reason) (i + 1) in
          let oc = open_out fn in output_string oc query; close_out oc
        | None -> ());
-      (vc, run_z3 query))
+      let v = match run_z3 query with
+        | R_verified -> Verified
+        | R_unknown -> Unknown
+        | R_error s -> Solver_error s
+        | R_sat (ctx, model) -> Failed (Cex.of_model m vc naming ctx model)   (* reconstruct here *)
+      in
+      (vc, v))
     vcs

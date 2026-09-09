@@ -1,0 +1,15 @@
+module PropListAppend
+
+type list 'a =
+  | Nil : list 'a
+  | Cons : 'a -> list 'a -> list 'a
+
+let rec app x y = match x with
+  | Nil -> y
+  | Cons h t -> Cons h (app t y)
+
+val app_assoc : x:list 'a -> y:list 'a -> z:list 'a ->
+        Lemma(ensures app (app x y) z = app x (app y z))
+let rec app_assoc x y z = match x with
+  | Nil -> ()
+  | Cons h t -> app_assoc t y z

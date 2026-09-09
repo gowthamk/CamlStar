@@ -1,0 +1,24 @@
+module Prop79
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec add x y = match x with
+  | Z -> y
+  | S x' -> S (add x' y)
+
+let rec sub x y = match x with
+  | Z -> Z
+  | S x' -> (match y with
+             | Z -> x
+             | S y' -> sub x' y')
+
+val tip_79 : a:nat -> b:nat -> c:nat -> Lemma(ensures sub (sub (S a) b) (S c) = sub (sub a b) c)
+let rec tip_79 a b c = match a with
+  | Z -> (match b with
+          | Z -> ()
+          | S b' -> ())
+  | S a' -> (match b with
+             | Z -> ()
+             | S b' -> tip_79 a' b' c)

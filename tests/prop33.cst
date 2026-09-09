@@ -1,0 +1,32 @@
+module Prop33
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec min x y = match x with
+  | Z -> Z
+  | S x' -> (match y with
+             | Z -> Z
+             | S y' -> S (min x' y'))
+
+let rec le x y = match x with
+  | Z -> true
+  | S x' -> (match y with
+             | Z -> false
+             | S y' -> le x' y')
+
+let rec eq_nat x y = match x with
+  | Z -> (match y with
+          | Z -> true
+          | S y' -> false)
+  | S x' -> (match y with
+             | Z -> false
+             | S y' -> eq_nat x' y')
+
+val tip_33 : a:nat -> b:nat -> Lemma(ensures eq_nat (min a b) a = le a b)
+let rec tip_33 a b = match a with
+  | Z -> ()
+  | S a' -> (match b with
+             | Z -> ()
+             | S b' -> tip_33 a' b')

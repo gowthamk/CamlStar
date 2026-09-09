@@ -277,8 +277,17 @@ let gen_equations (fname : string) (params : (var * base_typ) list)
             let pat_expr = mk_app (Tm_fvar l) (List.map (fun v -> Tm_var v) fvars) in
             let binders' =
               List.filter (fun (v, _) -> v.vid <> sv.vid) binders @ fbinders in
-            let args_map' = (sv.vid, pat_expr) :: List.remove_assoc sv.vid args_map in
             let s = [ (sv, pat_expr) ] in
+            (* Substitute the pattern into the surviving arg mappings too: a nested
+               match may scrutinize a variable (e.g. a list tail) that appears inside
+               another argument's mapping, so [xs -> Cons h t] must become
+               [xs -> Cons h (Cons h2 t2)] — otherwise the dropped [t] leaks into the
+               equation's LHS as an unbound symbol. *)
+            let args_map' =
+              (sv.vid, pat_expr)
+              :: List.map (fun (k, tm) -> (k, Subst.subst_term s tm))
+                   (List.remove_assoc sv.vid args_map)
+            in
             walk args_map' binders' (List.map (Subst.subst_term s) guards)
               (Subst.subst_term s br.br_body)
           | P_const c ->
@@ -286,6 +295,18 @@ let gen_equations (fname : string) (params : (var * base_typ) list)
           | P_var v -> walk args_map binders guards (Subst.subst_term [ (v, scrut) ] br.br_body)
           | P_wild _ -> walk args_map binders guards br.br_body)
         branches
+    | Tm_let ({ lb_rec = false; lbs = [ lb ] }, body) ->
+      (* A-normalized let: introduce the (universally quantified) result variable and
+         record its definition as a guard [g = def], then keep walking the body. This
+         keeps any subsequent match scrutinee a *variable*, so an [if]/nested match
+         flattens into guarded equations (a bool [g] stays with [g = def] + [g = c];
+         a datatype [g] is substituted away by [P_cons], leaving [def = C(...)]), and
+         no [let]/[match] survives into the equation RHS for ANF to choke on. *)
+      let g = lb.lb_name in
+      let gsort = match lb.lb_scheme with
+        | Some { ts_typ = T_refine { rbase; _ }; _ } -> rbase
+        | _ -> B_int in
+      walk args_map (binders @ [ (g, gsort) ]) (guards @ [ mk_eq (Tm_var g) lb.lb_def ]) body
     | _ ->
       let eq = mk_eq (lhs args_map) e in
       let g = match guards with [] -> eq | _ -> mk_imp (conj_terms guards) eq in

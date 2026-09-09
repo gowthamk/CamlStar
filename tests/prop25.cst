@@ -1,0 +1,37 @@
+module Prop25
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec max x y = match x with
+  | Z -> y
+  | S x' -> (match y with
+             | Z -> x
+             | S y' -> S (max x' y'))
+
+let rec le x y = match x with
+  | Z -> true
+  | S x' -> (match y with
+             | Z -> false
+             | S y' -> le x' y')
+
+let rec eq_nat x y = match x with
+  | Z -> (match y with
+          | Z -> true
+          | S y' -> false)
+  | S x' -> (match y with
+             | Z -> false
+             | S y' -> eq_nat x' y')
+
+val eq_refl : x:nat -> Lemma(ensures eq_nat x x)
+let rec eq_refl x = match x with
+  | Z -> ()
+  | S x' -> eq_refl x'
+
+val tip_25 : a:nat -> b:nat -> Lemma(ensures eq_nat (max a b) b = le a b)
+let rec tip_25 a b = match a with
+  | Z -> eq_refl b
+  | S a' -> (match b with
+             | Z -> ()
+             | S b' -> tip_25 a' b')
