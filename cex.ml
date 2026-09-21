@@ -145,28 +145,47 @@ let of_model (m : modul) (vc : Vc.t) (naming : Smtlib.naming) (ctx : Z3.context)
   let univ_of (srt : Srt.sort) : E.expr list option =
     if is_ui_sort srt then Some (M.sort_universe model srt) else None
   in
+  let bool_fns = List.map Smtlib.sanitize (Axioms.bool_fn_names m) in
   let funcs =
     List.filter_map
       (fun decl ->
          let raw = Sym.to_string (FD.get_name decl) in
          let doms = FD.get_domain decl in
          let col_univs = List.map univ_of doms in
-         if not (ends_rel raw) || List.length doms < 2 || List.mem None col_univs then None
+         if doms = [] || List.mem None col_univs then None   (* need finite (UI) columns *)
          else
            let univs = List.map (function Some u -> u | None -> []) col_univs in
-           let entries =
-             List.filter_map
-               (fun tup ->
-                  match M.eval model (E.mk_app ctx decl tup) true with
-                  | Some e when E.to_string e = "true" ->
-                    (match List.rev tup with
-                     | result :: rev_key -> Some (List.rev_map render rev_key, render result)
-                     | [] -> None)
-                  | _ -> None)
-               (cartesian univs)
-           in
-           if entries = [] then None
-           else Some (String.sub raw 0 (String.length raw - 4), Entries entries))
+           if ends_rel raw then
+             (* data relation f_rel(args, result): keep the true tuples, last column is
+                the result *)
+             (if List.length doms < 2 then None
+              else
+                let entries =
+                  List.filter_map
+                    (fun tup ->
+                       match M.eval model (E.mk_app ctx decl tup) true with
+                       | Some e when E.to_string e = "true" ->
+                         (match List.rev tup with
+                          | result :: rev_key -> Some (List.rev_map render rev_key, render result)
+                          | [] -> None)
+                       | _ -> None)
+                    (cartesian univs)
+                in
+                if entries = [] then None
+                else Some (String.sub raw 0 (String.length raw - 4), Entries entries))
+           else if List.mem (unquote raw) bool_fns then
+             (* bool predicate f(args): key is the argument tuple, value is the
+                evaluated boolean f(args) *)
+             let entries =
+               List.filter_map
+                 (fun tup ->
+                    match M.eval model (E.mk_app ctx decl tup) true with
+                    | Some e -> Some (List.map render tup, render e)
+                    | None -> None)
+                 (cartesian univs)
+             in
+             if entries = [] then None else Some (unquote raw, Entries entries)
+           else None)
       (M.get_func_decls model)
   in
   universes @ progvars @ funcs

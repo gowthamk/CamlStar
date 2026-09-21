@@ -18,10 +18,16 @@ val constructor_decls : Ast.modul -> string list
 (* functionality / injectivity / disjointness axioms as ordinary Ast.terms *)
 val datatype_axioms : Ast.modul -> Ast.term list
 
-(* (declare-fun f_rel .. Bool) for every user function (val/let with an arrow type) *)
+(* source names of functions that return bool: encoded as SMT predicates [f: args ->
+   Bool] under their own name rather than relationally abstracted into [f_rel] *)
+val bool_fn_names : Ast.modul -> string list
+
+(* declarations for every user function: [f_rel(args, result)] for data functions,
+   [f(args)] (a predicate) for bool-returning ones *)
 val function_decls : Ast.modul -> string list
 
-(* functionality axiom for each function relation (determinism) *)
+(* functionality axiom for each function *relation* (bool predicates are skipped —
+   an SMT predicate is already a function of its arguments) *)
 val function_axioms : Ast.modul -> Ast.term list
 
 (* result base sort of each function/constructor, for relabs binder sorts *)

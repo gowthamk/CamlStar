@@ -151,8 +151,13 @@ let rec go (naming : naming) (t : term) : string =
      | Tm_fvar l when is_interpreted l.bname ->
        Printf.sprintf "(%s %s)" (smt_op l.bname) (String.concat " " (List.map (go naming) args))
      | Tm_fvar l ->
-       (* uninterpreted application: user relation (f_rel), or a constructor app *)
+       (* uninterpreted application: user relation (f_rel), constructor, or a bool
+          predicate under its source name *)
        Printf.sprintf "(%s %s)" (sanitize l.bname) (String.concat " " (List.map (go naming) args))
+     | Tm_var v ->
+       (* a bool predicate applied under a Tm_var head (e.g. a recursive self-call):
+          use its source name, matching its predicate declaration *)
+       Printf.sprintf "(%s %s)" (sanitize v.vname) (String.concat " " (List.map (go naming) args))
      | _ -> failwith "smtlib: application head is not a symbol")
   | Tm_quant { qk; qv; qty; qbody } ->
     let sort = match qty with

@@ -22,8 +22,14 @@ let rec count x xs = match xs with
     let p = eq_nat x h in
     if p then S (count x t) else count x t
 
+val eq_refl: n:nat -> Lemma(ensures eq_nat n n)
+let rec eq_refl n = match n with
+  | Z -> ()
+  | S n' -> eq_refl n'
 
 val tip_04 : n:nat -> xs:natlist -> Lemma(ensures S (count n xs) = count n (Cons n xs))
 let tip_04 n xs = match xs with
   | Nil -> ()
-  | Cons x xs' -> tip_04 n xs' 
+  | Cons x xs' -> 
+    let p = eq_refl n in
+    tip_04 n xs' 

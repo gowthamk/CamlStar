@@ -37,10 +37,10 @@ let rec relabs (ret_sort : string -> base_typ) (is_pos : bool) (t : term) : term
     let bound = lb.lb_def in
     let head, args = spine bound [] in
     (match head_name head with
-     | Some name when args <> [] && is_abstract name ->
+     | Some name when args <> [] && is_abstract name && ret_sort name <> B_bool ->
        call_to_rel ret_sort is_pos x name args body
      | _ ->
-       (* not an abstract call (constant / alias / interpreted): inline and drop *)
+       (* not a data call (constant / alias / interpreted / bool predicate): inline *)
        relabs ret_sort is_pos (Subst.subst_term [ (x, bound) ] body))
   | Tm_let _ -> failwith "relabs: expected an ANF single-binding let"
   | Tm_quant q -> Tm_quant { q with qbody = relabs ret_sort is_pos q.qbody }

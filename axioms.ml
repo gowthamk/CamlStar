@@ -186,16 +186,35 @@ let function_sigs (m : modul) : (string * (base_typ list * base_typ)) list =
          | _ -> acc)
        [] m.mod_decls)
 
+(* source names of functions that already return bool: these are encoded as SMT
+   *predicates* [f : args -> Bool] under their own name, not relationally abstracted
+   into [f_rel(args, result)] (a bool result column would be redundant — the function
+   is already a predicate). *)
+let bool_fn_names (m : modul) : string list =
+  List.filter_map (fun (n, (_, out)) -> if out = B_bool then Some n else None) (function_sigs m)
+
 let function_decls (m : modul) : string list =
   List.map
     (fun (name, (ins, out)) ->
-      Printf.sprintf "(declare-fun %s (%s) Bool)"
-        (Smtlib.sanitize (rel_name name))
-        (String.concat " " (List.map Smtlib.sort_of_base (ins @ [ out ]))))
+      if out = B_bool then
+        (* predicate: keep the source name, args only, Bool range *)
+        Printf.sprintf "(declare-fun %s (%s) Bool)"
+          (Smtlib.sanitize name)
+          (String.concat " " (List.map Smtlib.sort_of_base ins))
+      else
+        (* relation: f_rel(args, result) *)
+        Printf.sprintf "(declare-fun %s (%s) Bool)"
+          (Smtlib.sanitize (rel_name name))
+          (String.concat " " (List.map Smtlib.sort_of_base (ins @ [ out ]))))
     (function_sigs m)
 
+(* Functionality is only needed for the *relations* (an SMT predicate is already a
+   function of its arguments), so bool functions are skipped here. *)
 let function_axioms (m : modul) : term list =
-  List.map (fun (name, (ins, out)) -> functionality (rel_name name) ins out) (function_sigs m)
+  List.filter_map
+    (fun (name, (ins, out)) ->
+      if out = B_bool then None else Some (functionality (rel_name name) ins out))
+    (function_sigs m)
 
 let ret_sort_table (m : modul) : (string, base_typ) Hashtbl.t =
   let tbl : (string, base_typ) Hashtbl.t = Hashtbl.create 32 in

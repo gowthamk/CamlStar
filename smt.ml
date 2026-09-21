@@ -20,8 +20,10 @@ let make_ret_sort (m : modul) : string -> base_typ =
   fun name -> match Hashtbl.find_opt tbl name with Some b -> b | None -> B_app (lid_of_str name, [])
 
 (* full positive pipeline, for globally-true formulas (definitional equations, assumes) *)
+let is_pred (ret_sort : string -> base_typ) (n : string) : bool = ret_sort n = B_bool
+
 let full_transform (ret_sort : string -> base_typ) (t : term) : term =
-  Relabs.transform ret_sort (Nnf.normalize (Anf.normalize t))
+  Relabs.transform ret_sort (Nnf.normalize (Anf.normalize (is_pred ret_sort) t))
 
 (* ===== auto-instantiation (cf. raven/frontend/src/auto_inst.rs) =====
    Collect the ground applied subterms of a VC — the abstract calls ANF hoisted to
@@ -151,7 +153,7 @@ let dedup (lines : string list) : string list =
 let build_query (m : modul) (ret_sort : string -> base_typ) (vc : Vc.t) : string * Smtlib.naming =
   let vc = Skolem.skolemize vc in                    (* hoist ∃-hyps to scope consts *)
   let naming = Smtlib.make_naming (List.map fst vc.Vc.scope) in  (* readable model names *)
-  let anf_f = Anf.normalize (vc_formula vc) in
+  let anf_f = Anf.normalize (is_pred ret_sort) (vc_formula vc) in
   let f = Relabs.transform ret_sort (Nnf.normalize anf_f) in     (* the negated VC *)
   let mat = materialization ret_sort anf_f in                    (* auto-instantiation *)
   let sort_decls, const_decls = scope_decls naming vc.Vc.scope in
