@@ -176,3 +176,39 @@ let rec go (naming : naming) (t : term) : string =
   | Tm_match _ -> failwith "smtlib: unexpected match in formula"
 
 let term_to_sexpr (naming : naming) (t : term) : string = go naming t
+
+(* ===== the "instantiated terms" ledger ===== *)
+
+(* Every user-function/constructor application appearing in [ts] (inner applications
+   first), deduplicated by printed form. Interpreted operators and connectives are
+   not themselves recorded, but their arguments are still traversed (so a guard call
+   like [le x h] is captured). *)
+let collect_apps (ts : term list) : term list =
+  let seen : (string, unit) Hashtbl.t = Hashtbl.create 64 in
+  let acc = ref [] in
+  let add tm =
+    let s = Ast.string_of_term tm in
+    if not (Hashtbl.mem seen s) then (Hashtbl.add seen s (); acc := tm :: !acc)
+  in
+  let rec go t =
+    match t with
+    | Tm_app _ ->
+      let head, args = head_spine t [] in
+      List.iter go args;
+      (match head with
+       | Tm_fvar l when not (is_interpreted l.bname) -> add t
+       | Tm_var _ -> add t                         (* recursive/other function reference *)
+       | _ -> ())
+    | Tm_quant q -> go q.qbody
+    | Tm_ascribed (e, _) -> go e
+    | _ -> ()
+  in
+  List.iter go ts; List.rev !acc
+
+(* The ledger grouped by source (goal / hypotheses / instantiate! hints). The
+   hypotheses group includes the constructor discriminators (Raven's "from patterns").
+   For *data* applications this equals what the backend actually materialises. *)
+let ledger_sections (vc : Vc.t) : (string * term list) list =
+  [ ("from the goal:", collect_apps [ vc.Vc.goal ]);
+    ("from the hypotheses:", collect_apps vc.Vc.hyps);
+    ("from the instantiate! hints:", collect_apps vc.Vc.instantiations) ]

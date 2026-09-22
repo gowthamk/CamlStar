@@ -17,9 +17,4 @@ let rec tip_22 a b c = match a with
              | Z -> ()
              | S b' -> (match c with
                         | Z -> let _ = instantiate!(S (max a' b')) in ()
-                        | S c' ->
-                          let _ = instantiate!(S (max a' b')) in
-                          let _ = instantiate!(S (max b' c')) in
-                          let _ = instantiate!(S (max (max a' b') c')) in
-                          let _ = instantiate!(S (max a' (max b' c'))) in
-                          tip_22 a' b' c'))
+                        | S c' -> tip_22 a' b' c'))

@@ -13,6 +13,22 @@ let vcs_path (src : string) : string =
   if Filename.check_suffix src ".cst" then Filename.chop_suffix src ".cst" ^ ".vcs"
   else src ^ ".vcs"
 
+(* ===== the "instantiated terms" ledger =====
+   The ground applied subterms (user functions / constructors) a VC materialises,
+   grouped by source (computed by [Smtlib.ledger_sections], shared with --dump-smt).
+   This is the mechanical input for choosing instantiate! hints: for a pinned
+   application in the ledger, unfold its definition one step and add whichever result
+   terms are ABSENT from the ledger. *)
+
+let print_ledger (vc : Vc.t) : unit =
+  Printf.printf "instantiated terms:\n";
+  List.iter
+    (fun (label, terms) ->
+      Printf.printf "  %s\n" label;
+      if terms = [] then Printf.printf "    (none)\n"
+      else List.iter (fun t -> Printf.printf "    %s\n" (Ast.string_of_term t)) terms)
+    (Smtlib.ledger_sections vc)
+
 let () =
   let print_vcs = ref false in
   let solve = ref false in
@@ -58,7 +74,7 @@ let () =
              if !solve then begin
                Printf.printf "  [%s] %s\n" (Smt.string_of_verdict v) vc.Vc.reason;
                match v with
-               | Smt.Failed cex -> Printf.printf "%s\n" (Cex.to_json cex)
+               | Smt.Failed cex -> Printf.printf "%s\n" (Cex.to_json cex); print_ledger vc
                | _ -> ()
              end)
            results;

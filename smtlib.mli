@@ -43,3 +43,9 @@ val smt_var : naming -> Ast.var -> string
 (* Render a (pipeline-normalised) term as an SMT-LIB2 s-expression string, using
    [naming] for its variables. *)
 val term_to_sexpr : naming -> Ast.term -> string
+
+(* The "instantiated terms" ledger: the user-function/constructor applications a VC
+   materialises, grouped [(label, terms)] by source (goal / hypotheses / hints), inner
+   applications first. This is the mechanical input for choosing instantiate! hints and
+   is printed both after a counterexample and as a comment atop each dumped query. *)
+val ledger_sections : Vc.t -> (string * Ast.term list) list
