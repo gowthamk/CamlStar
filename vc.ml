@@ -11,6 +11,7 @@ type t = {
   scope  : (Ast.var * Ast.base_typ) list;
   hyps   : Ast.term list;
   goal   : Ast.term;
+  instantiations : Ast.term list;
   range  : Ast.range;
   reason : string;
 }
@@ -39,5 +40,6 @@ let string_of_t (v : t) : string =
     (fun (x, s) -> line (Printf.sprintf "  var   %s : %s" x.Ast.vname (sort_str s)))
     v.scope;
   List.iter (fun h -> line ("  hyp   " ^ Ast.string_of_term h)) v.hyps;
+  List.iter (fun e -> line ("  inst  " ^ Ast.string_of_term e)) v.instantiations;
   line ("  ⊢     " ^ Ast.string_of_term v.goal);
   Buffer.contents buf

@@ -94,7 +94,7 @@ let build_lets is_rec (lbs : lb_syntax list) outer =
 %token <float> FLOAT
 
 %token MODULE LET REC AND IN VAL ASSUME TYPE MATCH WITH FUN IF THEN ELSE
-%token FORALL EXISTS REQUIRES ENSURES ASSERT WHEN TRUE FALSE LEMMA
+%token FORALL EXISTS REQUIRES ENSURES ASSERT WHEN TRUE FALSE LEMMA INSTANTIATE
 %token PRIVATE IRREDUCIBLE UNFOLD NOEQ LOGIC
 
 %token LPAREN RPAREN LBRACE RBRACE LBRACK RBRACK LBRACK_AT_AT
@@ -286,6 +286,8 @@ term:
       { fun sc -> mk_app (Tm_fvar assert_lid) [e sc] }
   | ASSUME e=term
       { fun sc -> mk_app (Tm_fvar assume_lid) [e sc] }
+  | INSTANTIATE LPAREN e=term RPAREN
+      { fun sc -> mk_app (Tm_fvar instantiate_lid) [e sc] }
   | e=tmIff { e }
 
 binder:

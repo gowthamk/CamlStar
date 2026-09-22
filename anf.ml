@@ -82,3 +82,7 @@ let rec form (is_pred : string -> bool) (t : term) : term =
   | _ -> failwith "anf: unexpected node in formula position"
 
 let normalize (is_pred : string -> bool) (t : term) : term = form is_pred t
+
+(* The abstract-call bindings hoisted out of a *value* term, in dependency order.
+   Used to materialise instantiate! hints (each hoisted call gets an ∃-witness). *)
+let hoist (is_pred : string -> bool) (e : term) : (var * term) list = snd (value is_pred e)

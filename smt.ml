@@ -54,10 +54,10 @@ let ground_lets (anf_f : term) : (var * term) list =
   in
   List.rev (go [] anf_f)
 
-let materialization (ret_sort : string -> base_typ) (anf_f : term) : term option =
-  match ground_lets anf_f with
+let materialize_binds (ret_sort : string -> base_typ) (binds : (var * term) list) : term option =
+  match binds with
   | [] -> None
-  | binds ->
+  | _ ->
     let chain = List.fold_right (fun (x, def) body -> single_let x def body) binds mk_true in
     Some (Relabs.transform_neg ret_sort chain)
 
@@ -155,7 +155,9 @@ let build_query (m : modul) (ret_sort : string -> base_typ) (vc : Vc.t) : string
   let naming = Smtlib.make_naming (List.map fst vc.Vc.scope) in  (* readable model names *)
   let anf_f = Anf.normalize (is_pred ret_sort) (vc_formula vc) in
   let f = Relabs.transform ret_sort (Nnf.normalize anf_f) in     (* the negated VC *)
-  let mat = materialization ret_sort anf_f in                    (* auto-instantiation *)
+  (* materialise both the VC's ground applied subterms and each instantiate! hint *)
+  let hint_binds = List.concat_map (Anf.hoist (is_pred ret_sort)) vc.Vc.instantiations in
+  let mat = materialize_binds ret_sort (ground_lets anf_f @ hint_binds) in
   let sort_decls, const_decls = scope_decls naming vc.Vc.scope in
   let final_axioms = global_final_axioms m in
   let raw_axioms = List.map (full_transform ret_sort) (global_raw_axioms m @ vc.Vc.axioms) in

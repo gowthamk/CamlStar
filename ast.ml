@@ -101,6 +101,7 @@ let not_lid    = lid_of_str "l_not"
 let eq_lid     = lid_of_str "eq"
 let assert_lid = lid_of_str "assert"
 let assume_lid = lid_of_str "assume"
+let instantiate_lid = lid_of_str "instantiate!"
 
 (* ===== Smart constructors ===== *)
 let mono (t : typ) : tscheme = { ts_vars = []; ts_typ = t }

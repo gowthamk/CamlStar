@@ -65,6 +65,8 @@ let poly_eq () =
 let bool_binop = { bound = []; body = I_arrow (I_bool, I_arrow (I_bool, I_bool)) }
 let bool_unop  = { bound = []; body = I_arrow (I_bool, I_bool) }
 let assert_ty  = { bound = []; body = I_arrow (I_bool, I_unit) }
+let poly_inst () =
+  let tv = Ast.fresh_tyvar "a" in { bound = [(tv, false)]; body = I_arrow (I_var tv, I_unit) }
 
 let setup_prelude () =
   let add name sch = Hashtbl.replace genv name sch in
@@ -76,7 +78,8 @@ let setup_prelude () =
   List.iter (fun op -> add op bool_binop) ["l_and"; "l_or"; "l_imp"; "l_iff"];
   add "l_not" bool_unop;
   add "assert" assert_ty;
-  add "assume" assert_ty
+  add "assume" assert_ty;
+  add "instantiate!" (poly_inst ())
 
 (* ===== side tables for hole-filling (keyed by binder/let vid) ===== *)
 

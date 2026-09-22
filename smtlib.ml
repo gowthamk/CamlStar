@@ -84,7 +84,10 @@ let make_naming (vars : var list) : naming =
       (fun v -> if Hashtbl.mem seen v.vid then false else (Hashtbl.add seen v.vid (); true))
       vars
   in
-  let base (v : var) : string = if String.length v.vname > 0 then v.vname else "x" in
+  (* "_" is a reserved SMT symbol and "" is illegal, so those never print bare —
+     force them onto the vid-suffixed path below *)
+  let base (v : var) : string =
+    if String.length v.vname > 0 && v.vname <> "_" then v.vname else "x" in
   let count = Hashtbl.create 16 in
   List.iter
     (fun v -> let b = base v in

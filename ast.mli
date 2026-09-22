@@ -112,6 +112,7 @@ val not_lid : lid
 val eq_lid : lid
 val assert_lid : lid
 val assume_lid : lid
+val instantiate_lid : lid
 
 (* ===== Smart constructors ===== *)
 val mono    : typ -> tscheme

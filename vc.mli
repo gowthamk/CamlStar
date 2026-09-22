@@ -25,6 +25,7 @@ type t = {
   scope  : (Ast.var * Ast.base_typ) list;    (* the logical context Γ: sorted vars, ordered *)
   hyps   : Ast.term list;                    (* local assumptions: Γ's refinements, path conditions, antecedent *)
   goal   : Ast.term;                         (* the proposition to prove *)
+  instantiations : Ast.term list;            (* instantiate! hints: terms to materialise *)
   range  : Ast.range;                        (* source of the obligation, for error reporting *)
   reason : string;                           (* human-readable label *)
 }

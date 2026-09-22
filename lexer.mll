@@ -95,6 +95,7 @@ rule token = parse
   | '/'                { SLASH }
   | '%'                { PERCENT }
 
+  | "instantiate!"     { INSTANTIATE }   (* proof hint; '!' is not an idchar *)
   | lident as s        { ident_or_kw s }
   | uident as s        { uident_or_kw s }
 

@@ -9,3 +9,7 @@
    latter are encoded as SMT predicates, not relationally abstracted. *)
 
 val normalize : (string -> bool) -> Ast.term -> Ast.term
+
+(* The abstract-call bindings hoisted out of a value term (in dependency order),
+   e.g. for materialising an instantiate! hint. *)
+val hoist : (string -> bool) -> Ast.term -> (Ast.var * Ast.term) list

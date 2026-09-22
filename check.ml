@@ -46,14 +46,17 @@ let rec head_spine (t : term) (acc : term list) : term * term list =
 
 (* ===== typing context ===== *)
 
-type binding = B_typed of var * typ | B_hyp of term
+type binding =
+  | B_typed of var * typ   (* x : T *)
+  | B_hyp of term          (* an assumed proposition *)
+  | B_inst of term         (* an instantiate! hint: a term to materialise in the VC *)
 type env = binding list                       (* innermost first *)
 
 let rec lookup (env : env) (x : var) : typ option =
   match env with
   | [] -> None
   | B_typed (y, t) :: rest -> if y.vid = x.vid then Some t else lookup rest x
-  | B_hyp _ :: rest -> lookup rest x
+  | (B_hyp _ | B_inst _) :: rest -> lookup rest x
 
 (* Flatten Γ (innermost-first) into a VC scope + hypotheses, in source order. *)
 let to_scope_hyps (env : env) : (var * base_typ) list * term list =
@@ -64,8 +67,13 @@ let to_scope_hyps (env : env) : (var * base_typ) list * term list =
         let phi = Subst.subst_term [ (rv, Tm_var x) ] rphi in
         (scope @ [ (x, rbase) ], if is_true phi then hyps else hyps @ [ phi ])
       | B_typed (_, T_arrow _) -> (scope, hyps)   (* higher-order: not first-order *)
-      | B_hyp p -> (scope, if is_true p then hyps else hyps @ [ p ]))
+      | B_hyp p -> (scope, if is_true p then hyps else hyps @ [ p ])
+      | B_inst _ -> (scope, hyps))                (* hints go to VC.instantiations, not hyps *)
     ([], []) (List.rev env)
+
+(* the instantiate! hints in scope, in source order *)
+let to_instantiations (env : env) : term list =
+  List.filter_map (function B_inst e -> Some e | _ -> None) (List.rev env)
 
 (* Does a type carry a non-trivial (user-written) refinement anywhere? Used to
    decide whether a let annotation is worth enforcing (an erased inference shape
@@ -90,7 +98,7 @@ let delta_base_binders (delta : env) : (var * base_typ) list =
 let close_type (delta : env) (t : typ) : typ =
   match t with
   | T_arrow _ ->
-    let dvars = List.filter_map (function B_typed (z, _) -> Some z | B_hyp _ -> None) delta in
+    let dvars = List.filter_map (function B_typed (z, _) -> Some z | B_hyp _ | B_inst _ -> None) delta in
     let free = Subst.free_vars_typ t in
     if List.exists (fun z -> List.exists (fun v -> v.vid = z.vid) free) dvars then
       raise (Check_error "cannot synthesize a higher-order let/match result that captures local bindings");
@@ -104,7 +112,8 @@ let close_type (delta : env) (t : typ) : typ =
             let f = Subst.subst_term [ (w, Tm_var z) ] chi in
             if is_true f then None else Some f
           | B_typed (_, T_arrow _) -> None
-          | B_hyp p -> if is_true p then None else Some p)
+          | B_hyp p -> if is_true p then None else Some p
+          | B_inst _ -> None)                (* hints are not part of the closed type *)
         ordered
     in
     let conjuncts = facts @ (if is_true rphi then [] else [ rphi ]) in
@@ -136,6 +145,7 @@ let mk_vc (env : env) (goal : term) : Vc.t list =
   else
     let scope, hyps = to_scope_hyps env in
     [ { Vc.decls = []; axioms = !module_axioms; scope; hyps; goal;
+        instantiations = to_instantiations env;
         range = !cur_range; reason = !cur_reason } ]
 
 (* interpreted operators: synthesized from their operands, not from [genv] *)
@@ -231,6 +241,12 @@ and synth_app (env : env) (head : term) (args : term list) (whole : term) : typ 
      | [ phi ] -> (t_unit, mk_vc env phi)
      | _ -> raise (Check_error "assert expects a single argument"))
   | Tm_fvar l when lid_eq l assume_lid -> (t_unit, [])
+  | Tm_fvar l when lid_eq l instantiate_lid ->
+    (* instantiate!(e): type-check e (collecting its VCs) and yield unit; the hint
+       itself is registered as a B_inst in [extend_lets] when it is a let RHS *)
+    (match args with
+     | [ e ] -> let _, v = synth env e in (t_unit, v)
+     | _ -> raise (Check_error "instantiate! expects a single argument"))
   | Tm_fvar l when is_interpreted l.bname ->
     let arg_ts = List.map (synth env) args in
     let vcs = List.concat_map snd arg_ts in
@@ -359,22 +375,32 @@ and extend_lets (env : env) (lbs : letbindings) : binding list * Vc.t list =
     let vcs = List.concat_map (fun (lb, sch) -> check def_env lb.lb_def sch.ts_typ) named in
     (delta, vcs)
   end else
-    let process (lb, sch) =
-      match sch.ts_typ with
-      | T_arrow _ ->
-        (* not first-order and not synthesizable from a bare lambda *)
-        (B_typed (lb.lb_name, sch.ts_typ), check env lb.lb_def sch.ts_typ)
-      | T_refine _ ->
-        (* [synth] already selfifies the selfifiable cases (var/const/application),
-           so [s] carries [name = rhs] where that is expressible; a match/let RHS is
-           not selfifiable (no [v = match …] term), and its disjunctive/closed type is
-           the information we keep. *)
-        let s, v = synth env lb.lb_def in
-        let v_ann = if has_refinement sch.ts_typ then subtype env s sch.ts_typ else [] in
-        (B_typed (lb.lb_name, s), v @ v_ann)
+    let process (lb, sch) : binding list * Vc.t list =
+      (* a wildcard binder becomes a fresh, safe (non-"_") anonymous variable, so
+         nothing named "_" reaches the SMT backend as the reserved symbol *)
+      let name = if lb.lb_name.vname = "_" then fresh_var "u" else lb.lb_name in
+      match head_spine lb.lb_def [] with
+      | Tm_fvar l, [ e ] when lid_eq l instantiate_lid ->
+        (* instantiate!(e): bind the name to plain unit (do NOT selfify — a
+           [w = instantiate!(e)] fact would leak the instantiate! symbol into SMT) and
+           record e as a materialisation hint for the VCs of the continuation *)
+        let _, v = synth env e in
+        ([ B_typed (name, t_unit); B_inst e ], v)
+      | _ ->
+        (match sch.ts_typ with
+         | T_arrow _ ->
+           (* not first-order and not synthesizable from a bare lambda *)
+           ([ B_typed (name, sch.ts_typ) ], check env lb.lb_def sch.ts_typ)
+         | T_refine _ ->
+           (* [synth] already selfifies the selfifiable cases (var/const/application),
+              so [s] carries [name = rhs] where that is expressible; a match/let RHS is
+              not selfifiable, and its disjunctive/closed type is the information we keep. *)
+           let s, v = synth env lb.lb_def in
+           let v_ann = if has_refinement sch.ts_typ then subtype env s sch.ts_typ else [] in
+           ([ B_typed (name, s) ], v @ v_ann))
     in
     let results = List.map process named in
-    (List.map fst results, List.concat_map snd results)
+    (List.concat_map fst results, List.concat_map snd results)
 
 (* ===== module entry point ===== *)
 
