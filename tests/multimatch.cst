@@ -1,0 +1,41 @@
+module MultiMatch
+
+ type nat =
+   | Z: nat
+   | S: nat -> nat
+
+ type natlist =
+   | Nil: natlist
+   | Cons: nat -> natlist -> natlist
+
+ let rec eq_nat x y = match x,y with
+   | Z, Z -> true
+   | Z, S(y') -> false 
+   | S(x'), Z -> false
+   | S(x'), S(y')  -> eq_nat x' y'
+
+ let rec add x y = match x with
+   | Z -> y
+   | S x' -> let p = add x' y in
+             S p
+let rec count xs = match xs with
+  | Nil -> Z
+  | Cons x xs' -> let p = count xs' in
+                    S p
+
+let rec append xs ys = match xs with
+  | Nil -> ys
+  | Cons x xs' -> let l = append xs' ys in
+                    Cons x l
+
+val tip_two: xs:natlist -> ys:natlist ->
+        Lemma(ensures add (count xs) (count ys) = count (append xs ys))
+let rec tip_two xs ys = match xs with
+  | Nil -> ()
+  | Cons x xs' -> tip_two xs' ys
+
+(* exercises the 2-scrutinee `eq_nat` desugaring in a real proof *)
+val eq_nat_refl : x:nat -> Lemma(ensures eq_nat x x)
+let rec eq_nat_refl x = match x with
+  | Z -> ()
+  | S x' -> eq_nat_refl x'

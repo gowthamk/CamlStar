@@ -1,0 +1,17 @@
+module MultiMatch3
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+(* 3-scrutinee match: all-constructor rows plus a wildcard-tuple default *)
+let rec eq3 x y z = match x, y, z with
+  | Z, Z, Z -> true
+  | S x', S y', S z' -> eq3 x' y' z'
+  | _, _, _ -> false
+
+(* exercises the 3-column desugaring (mixed constructor/wildcard columns + default) *)
+val eq3_refl : x:nat -> Lemma(ensures eq3 x x x)
+let rec eq3_refl x = match x with
+  | Z -> ()
+  | S x' -> eq3_refl x'

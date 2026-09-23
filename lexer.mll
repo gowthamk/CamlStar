@@ -83,6 +83,7 @@ rule token = parse
   | ']'                { RBRACK }
   | ':'                { COLON }
   | ';'                { SEMICOLON }
+  | ','                { COMMA }
   | '.'                { DOT }
   | '|'                { BAR }
   | '='                { EQUALS }

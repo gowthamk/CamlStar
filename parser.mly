@@ -70,6 +70,90 @@ let mk_if c a b =
   Tm_match (c, [ { br_pat = P_const (C_bool true);  br_when = None; br_body = a };
                  { br_pat = P_const (C_bool false); br_when = None; br_body = b } ])
 
+(* ===== multi-scrutinee match: desugar to nested single-scrutinee matches =====
+   A row is (patterns, when-guard, body); [desugar_match scruts rows] compiles the
+   pattern matrix column-by-column. Every emitted constructor pattern has only fresh
+   variable sub-binders, so the result stays inside the fragment check.ml/axioms.ml
+   accept (var/wild constructor fields only); original sub-patterns become new columns
+   matched against those fresh vars. *)
+type mrow = { r_pats : pat list; r_when : term option; r_body : term }
+
+let pat_head = function P_cons (l, _) -> Some (`Cons l) | P_const c -> Some (`Const c)
+                      | P_var _ | P_wild _ -> None
+
+(* substitute [v := s] (v a pattern-bound variable, s the scrutinee) in a row's
+   guard and body; a wildcard binds nothing *)
+let bind_col (p : pat) (s : term) (r : mrow) (rest_pats : pat list) : mrow =
+  match p with
+  | P_var v -> { r_pats = rest_pats;
+                 r_when = Option.map (Subst.subst_term [ (v, s) ]) r.r_when;
+                 r_body = Subst.subst_term [ (v, s) ] r.r_body }
+  | _ -> { r with r_pats = rest_pats }        (* P_wild / (handled elsewhere) *)
+
+let rec desugar_rows (scruts : term list) (rows : mrow list) : term =
+  match scruts with
+  | [] ->
+    (* no columns: first row wins; when-guards fall through to later rows *)
+    let rec fold = function
+      | [] -> failwith "match: non-exhaustive (no branch matched)"
+      | r :: rs -> (match r.r_when with None -> r.r_body | Some g -> mk_if g r.r_body (fold rs))
+    in
+    fold rows
+  | s :: rest_scruts ->
+    let col r = match r.r_pats with p :: _ -> p | [] -> failwith "match: arity mismatch" in
+    let tl  r = match r.r_pats with _ :: ps -> ps | [] -> failwith "match: arity mismatch" in
+    if List.for_all (fun r -> pat_head (col r) = None) rows then
+      (* whole column is variables/wildcards: bind and drop it, no match node *)
+      desugar_rows rest_scruts (List.map (fun r -> bind_col (col r) s r (tl r)) rows)
+    else begin
+      (* split on the constructors/constants appearing in this column, in first-seen order *)
+      let heads = ref [] in
+      List.iter (fun r -> match pat_head (col r) with
+        | Some h when not (List.mem h !heads) -> heads := h :: !heads | _ -> ()) rows;
+      let has_default = List.exists (fun r -> pat_head (col r) = None) rows in
+      let branch_for h =
+        (* fresh field binders for this head; arity read off a matching row's sub-patterns *)
+        let arity = List.fold_left (fun acc r -> match col r, h with
+                      | P_cons (l', qs), `Cons l when lid_eq l l' -> List.length qs
+                      | _ -> acc) 0 rows in
+        let fields = List.init arity (fun _ -> fresh_var "m") in
+        let sub_scruts = List.map (fun v -> Tm_var v) fields in
+        let mk_pat = match h with
+          | `Const c -> P_const c
+          | `Cons l  -> P_cons (l, List.map (fun v -> P_var v) fields) in
+        let rows' =
+          List.filter_map (fun r ->
+            match pat_head (col r) with
+            | Some h' when h' = h ->            (* constructor row: sub-patterns become columns *)
+              let qs = match col r with P_cons (_, qs) -> qs | _ -> [] in
+              Some { r with r_pats = qs @ tl r }
+            | None ->                            (* a var/wild row matches this head too *)
+              let wilds = List.map (fun _ -> P_wild (fresh_var "_")) fields in
+              Some (bind_col (col r) s r (wilds @ tl r))
+            | _ -> None) rows
+        in
+        { br_pat = mk_pat; br_when = None;
+          br_body = desugar_rows (sub_scruts @ rest_scruts) rows' }
+      in
+      let cbranches = List.rev_map branch_for !heads in
+      let default =
+        if not has_default then []
+        else
+          let dflt = fresh_var "_" in
+          let rows' = List.filter_map (fun r ->
+            if pat_head (col r) = None then Some (bind_col (col r) s r (tl r)) else None) rows in
+          [ { br_pat = P_wild dflt; br_when = None;
+              br_body = desugar_rows rest_scruts rows' } ]
+      in
+      Tm_match (s, cbranches @ default)
+    end
+
+let desugar_match (scruts : term list) (rows : mrow list) : term =
+  let n = List.length scruts in
+  List.iter (fun r -> if List.length r.r_pats <> n then
+                failwith "match: a branch has the wrong number of patterns") rows;
+  desugar_rows scruts rows
+
 (* Build a (possibly recursive, possibly mutual) let group. `outer` is the scope
    outside the let; returns (letbindings, scope-for-body). *)
 let build_lets is_rec (lbs : lb_syntax list) outer =
@@ -98,7 +182,7 @@ let build_lets is_rec (lbs : lb_syntax list) outer =
 %token PRIVATE IRREDUCIBLE UNFOLD NOEQ LOGIC
 
 %token LPAREN RPAREN LBRACE RBRACE LBRACK RBRACK LBRACK_AT_AT
-%token COLON SEMICOLON DOT BAR ARROW SUBTYPE EQUALS
+%token COLON SEMICOLON COMMA DOT BAR ARROW SUBTYPE EQUALS
 %token IMPLIES IFF CONJ DISJ TILDE
 %token EQEQ NEQ LT LE GT GE PLUS MINUS STAR SLASH PERCENT
 
@@ -278,6 +362,8 @@ term:
       { fun sc -> mk_if (c sc) (a sc) (b sc) }
   | MATCH e=term WITH bs=branches
       { fun sc -> Tm_match (e sc, bs sc) }
+  | MATCH e=term COMMA es=separated_nonempty_list(COMMA, term) WITH bs=multibranches
+      { fun sc -> desugar_match (List.map (fun f -> f sc) (e :: es)) (bs sc) }
   | FORALL bs=nonempty_list(binder) DOT e=term
       { fun sc -> build_quant Forall bs e sc }
   | EXISTS bs=nonempty_list(binder) DOT e=term
@@ -318,6 +404,24 @@ branch:
           { br_pat = pat;
             br_when = (match g with Some w -> Some (w sc') | None -> None);
             br_body = e sc' } }
+
+/* Multi-scrutinee branches: a comma-separated tuple of patterns (≥2). Scope is
+   threaded left-to-right through the patterns, then the guard/body see them all. */
+multibranches:
+  | b=multibranch %prec LOW_BRANCH { fun sc -> [ b sc ] }
+  | b=multibranch bs=multibranches { fun sc -> b sc :: bs sc }
+
+multibranch:
+  | BAR p=pattern COMMA ps=separated_nonempty_list(COMMA, pattern)
+        g=option(preceded(WHEN, term)) ARROW e=term
+      { fun sc ->
+          let (pats, sc') =
+            List.fold_left (fun (acc, s) pf -> let (pp, s') = pf s in (acc @ [ pp ], s'))
+              ([], sc) (p :: ps)
+          in
+          { r_pats = pats;
+            r_when = (match g with Some w -> Some (w sc') | None -> None);
+            r_body = e sc' } }
 
 tmIff:
   | l=tmImplies IFF r=tmIff  { fun sc -> mk_iff (l sc) (r sc) }
