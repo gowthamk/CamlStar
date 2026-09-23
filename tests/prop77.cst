@@ -37,5 +37,9 @@ let rec tip_77 x xs = match xs with
   | Cons h t ->
     let u1 = le_neg x h in
     (match t with
-     | Nil -> ()
-     | Cons h2 t2 -> tip_77 x t)
+     | Nil ->
+       let _ = instantiate!(Cons h (insort x t)) in
+       ()
+     | Cons h2 t2 ->
+       let _ = instantiate!(Cons h2 (insort x t2)) in
+       tip_77 x t)

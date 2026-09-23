@@ -29,7 +29,7 @@ let rec eq_refl n = match n with
 
 val tip_04 : n:nat -> xs:natlist -> Lemma(ensures S (count n xs) = count n (Cons n xs))
 let tip_04 n xs = match xs with
-  | Nil -> ()
-  | Cons x xs' -> 
+  | Nil -> let _ = eq_refl n in ()
+  | Cons x xs' ->
     let p = eq_refl n in
     tip_04 n xs' 
