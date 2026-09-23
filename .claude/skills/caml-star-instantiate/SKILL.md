@@ -31,33 +31,24 @@ already present. Repeat until the file verifies or the frontier proves a lemma i
 > lemma statements, not the proof structure (matches/recursion). If a lemma cannot be
 > closed by instantiations alone, say so and stop; do not "fix" it by editing code.
 
-## Background: why instantiations are needed (read once)
+> **This is the instantiation stage of `caml-star-prove`** (the top-level Caml\* proof
+> skill). `caml-star-prove` owns the full background on Caml\* and relational abstraction
+> and the handoff to lemmas; read it there if you need it. Invoked directly, this skill
+> still stands alone and finishes with the report contract below.
 
-Caml* does **not** hand a datatype function to Z3 as a function. It **relationally
-abstracts** it: a user function or constructor `f : A → B` becomes a *relation*
-`f_rel(args, result)` with a **functionality** axiom (same args ⇒ same result) and
-**definitional equations** from `f`'s body. This keeps queries decidable (EPR), but it is
-deliberately *incomplete* in one way: **totality is not asserted.** Nothing says every
-application `f(args)` has a result, nor that every element of a datatype sort is reachable
-by constructors. So a model may contain **"junk" elements** — an element of sort `nat`
-that is neither `Z` nor `S` of anything.
+## Background: why instantiations are needed (recap)
 
-A definitional equation like `max (S a') (S b') = S (max a' b')` is *guarded by the
-constructor shape of its arguments*, and its right-hand side can only fire once the
-witness `S (max a' b')` **exists** in the model. If that successor term is never
-materialized, the equation stays silent and `max (S a') (S b')` is free to land on a junk
-element — a spurious counterexample.
-
-Caml* auto-materializes the applied subterms that **appear syntactically in the VC** (the
-goal, the hypotheses, each recursive call). What it cannot invent are the
-**constructor-of-a-recursive-subresult** witnesses that appear only *after* you unfold a
-definition one step. `instantiate!(e)` supplies exactly those: it forces `e`'s applied
-subterms to be materialized (an ∃-witness per call), so the guarded equations fire.
-
-`instantiate!(e)` is **sound** (it only asserts witnesses that exist for total functions)
-and **completeness-only**: adding one can turn a spurious `counterexample` into
-`verified`, and it can never make a true `verified` become false. When in doubt, adding a
-hint is safe — so the method below adds candidates in a batch, then trims.
+Caml* **relationally abstracts** each datatype function `f : A → B` into a relation
+`f_rel(args, result)` with a functionality axiom and guarded **definitional equations** —
+but it does **not** assert totality, to stay in EPR. So a model may contain **"junk"
+elements** (a `nat` that is neither `Z` nor `S` of anything), and a guarded equation like
+`max (S a') (S b') = S (max a' b')` can only fire once its witness `S (max a' b')` **exists**
+in the model. Caml* auto-materializes the applied subterms that appear syntactically in the
+VC (goal, hypotheses, recursive calls); the **constructor-of-a-recursive-subresult**
+witnesses that appear only after unfolding one step are what it misses. `instantiate!(e)`
+forces `e`'s applied subterms into the model, so the guarded equations fire. It is **sound**
+and **completeness-only** — adding one can only turn a spurious `counterexample` into
+`verified` — so the method below adds candidates in a batch, then trims.
 
 ## The ledger: your mechanical input
 
@@ -134,14 +125,24 @@ this is a loop. Adding hints in a batch (rather than one at a time) collapses th
 a time and re-run; drop any whose removal still verifies. This yields a minimal, readable
 set (many arms need only a single hint — see below).
 
-### Stop conditions
+### Stop conditions and the report contract
 
-- **Verified.** All VCs pass after minimizing → done.
-- **Lemma required.** The coverage pre-check fails / the frontier saturates: unfolding
+Finish by reporting exactly one verdict, so a caller (`caml-star-prove`) can act on it:
+
+- **DISCHARGED.** All VCs pass after minimizing → report the final `N verified, 0
+  counterexamples` and the hints kept. Done.
+- **SATURATED.** A frontier round adds no new candidate yet some VC is still red: unfolding
   keeps producing structurally-similar applications on ever-smaller arguments and never
   bottoms out into a term already in the ledger. A finite set of ground instantiations
-  cannot cover an unbounded inductive chain. **Report this; do not edit code.** (Example:
-  `tip_04` needs `∀n. eq_nat n n`, a reflexivity lemma — no instantiation can supply it.)
+  cannot cover an unbounded inductive chain — the gap is a missing **fact (lemma)**, not a
+  missing witness. **Report SATURATED; do not edit further.** List each still-red VC with
+  its stuck goal term and the un-closable application (the evidence a lemma is needed). Keep
+  any hints that were independently useful. (Example: `tip_04` needs `∀n. eq_nat n n`, a
+  reflexivity lemma — no instantiation can supply it.)
+
+When run as the instantiation gate of `caml-star-prove`, SATURATED hands control back to it
+to hypothesize the lemma; run directly, SATURATED is the final answer (a lemma is out of
+this skill's scope).
 
 ## Where and how to write it
 
