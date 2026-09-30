@@ -1,18 +1,21 @@
 # Lemma signatures — classifying a saturated counterexample
 
-Once `caml-star-instantiate` has **saturated** (a frontier round adds nothing yet a VC is
-still red), the remaining gap needs an inductive *lemma* (or a case split). This file names
-the gap from the counterexample. Test the six signatures **in this order** (cheapest fix
-first) and take the first whose evidence matches. Every signature's evidence is readable off
-the `--solve` output: the JSON countermodel plus the `instantiated terms:` ledger.
+Once `caml-star-instantiate` has reported **SATURATED** (no stuck application has
+constructor-shaped arguments — every remaining discrepancy is on an opaque argument — or the
+fixes regress forever, yet a VC is still red), the remaining gap needs an inductive *lemma*
+(or a case split). This file names the gap from the counterexample. Test the
+six signatures **in this order** (cheapest fix first) and take the first whose evidence
+matches. Evidence comes from three places:
 
-Read these first, they recur below:
-- **Countermodel** — sort universes, the program variables' values, and each
-  function/constructor as a table. A datatype value is **junk** if it is neither a nullary
-  constructor nor in the range of any constructor map.
-- **Ledger** — the applied terms the VC has in hand, grouped `from the goal / hypotheses /
-  instantiate! hints`. The **hypotheses** group shows which constructor each scrutinee took
-  (the discriminators) and which recursive calls / guard facts are present.
+- **Countermodel** (the `--solve` `• Counterexample:` block, JSON-like but quote-free, with
+  map entries written `args ↦ result`) — sort universes, the program variables' values, and
+  each function/constructor as a table.
+- **Goal vs. hypotheses** — the target's `ensures` is the **goal**; the failing arm's
+  **hypotheses** are printed under `• Hypotheses:` on each counterexample (the match
+  discriminators, recursive/lemma calls, and guards) and are also readable off the source arm.
+  This is the goal-vs-hypothesis distinction the signatures below use.
+- **The `instantiated terms:` list** — the flat set of applications already materialised as
+  witnesses; used only to check whether a term is present.
 
 ---
 
@@ -36,7 +39,7 @@ at least one strict): `let _ = tip_NN a' ... in ...`. Not a lemma — just a cal
 
 **Evidence.** A function unfolds to `let p = g … in if p then A else B`, and the
 countermodel assigns `g …` the value that fires the *wrong* branch, with nothing pinning
-it. The stuck goal term stays junk because the equation you need (the `A` branch) never
+it. The stuck goal term stays undefined because the equation you need (the `A` branch) never
 fires.
 
 **Recipe.** Take the guard instance at the value the proof needs, and **generalize
@@ -62,7 +65,7 @@ and `sorted` then needs `le h x`. The guard is free ⇒ a totality-shaped guard 
 
 **Evidence.** The goal's own step is blocked by an **opaque application** in scrutinee
 position (e.g. `add m n` where a match needs to see whether it is `Z`/`S _`), *not* a bare
-input variable, and the frontier is empty.
+input variable, and instantiation is saturated (no stuck application it can materialize).
 
 **Recipe — backwards from the blocked step.** Ask which constructor form the opaque
 application must take for the blocked equation to fire and land on an available hypothesis;
@@ -115,9 +118,10 @@ holds at the instance (supply it from the hypothesis in scope).
 
 ## 6. Case split (structure, not a lemma)
 
-**Evidence.** Frontier empty **and** the blocking scrutinee is a **bare input variable** of
-the target (contrast §3's opaque application); the ledger is typically tiny and the variable
-appears with no constructor discriminator pinning its shape.
+**Evidence.** Instantiation saturated (no instantiable stuck application) **and** the blocking scrutinee is
+a **bare input variable** of the target (contrast §3's opaque application); the
+instantiated-terms list is typically tiny and the variable appears with no constructor
+discriminator pinning its shape.
 
 **Fix.** Wrap the failing branch's body in a `match` on that variable. Each new arm becomes
 its own VC (and may itself need instantiations or a further lemma — re-run and re-classify).
@@ -145,4 +149,4 @@ Signatures are tests in a decision order, not disjoint states; recipes hand off:
 | 3 | shape lemma | opaque application blocks a match | constructor-form equation, derived backwards |
 | 4 | algebraic lemma | endpoints differ by an argument permutation | endpoint anti-unification |
 | 5 | conditional preservation | `P (f x a)` wanted, `P a` known | `P a ==> P (f x a)` |
-| 6 | case split | frontier empty, bare-variable scrutinee | `match` on the variable |
+| 6 | case split | saturated (no instantiable stuck app), bare-variable scrutinee | `match` on the variable |

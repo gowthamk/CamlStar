@@ -1,0 +1,72 @@
+module Prop04
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type natlist =
+  | Nil : natlist
+  | Cons : nat -> natlist -> natlist
+
+let rec eq_nat x y = match x with
+  | Z -> (match y with
+          | Z -> true
+          | S y' -> false)
+  | S x' -> (match y with
+             | Z -> false
+             | S y' -> eq_nat x' y')
+
+let rec count x xs = match xs with
+  | Nil -> Z
+  | Cons h t -> 
+    let p = eq_nat x h in
+    if p then S (count x t) else count x t
+
+val tip_04 : n:nat -> xs:natlist -> Lemma(ensures S (count n xs) = count n (Cons n xs))
+let tip_04 n xs = match xs with
+  | Nil -> ()
+  | Cons x xs' -> tip_04 n xs' 
+
+(*
+Running Caml* on this example yeilds the following output:
+
+[VC#1: failed] definition of tip_04
+  • Location: ./tests/prop04.cst:31:0-35:16
+  • Hypotheses:
+    xs = Nil
+    v = ()
+  • Counterexample:
+    nat: [nat!2, Z, nat!0],
+    natlist: [Nil, natlist!1],
+    n: nat!0,
+    xs: Nil,
+    eq_nat: {
+      (nat!2, nat!2) ↦ true,
+      (nat!2, Z) ↦ false,
+      (nat!2, nat!0) ↦ true,
+      (Z, nat!2) ↦ false,
+      (Z, Z) ↦ true,
+      (Z, nat!0) ↦ true,
+      (nat!0, nat!2) ↦ true,
+      (nat!0, Z) ↦ true,
+      (nat!0, nat!0) ↦ false
+    },
+    S: {
+      Z ↦ nat!2
+    },
+    Cons: {
+      (nat!0, Nil) ↦ natlist!1
+    },
+    count: {
+      (nat!2, Nil) ↦ Z,
+      (Z, Nil) ↦ Z,
+      (nat!0, Nil) ↦ Z,
+      (nat!0, natlist!1) ↦ Z
+    }
+  • Instantiated terms:
+    count n xs
+    S (count n xs)
+    Cons n xs
+    count n (Cons n xs)
+
+*)

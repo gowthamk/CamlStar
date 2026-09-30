@@ -26,15 +26,14 @@ it: a user function or constructor `f : A → B` becomes a relation `f_rel(args,
 with a **functionality** axiom (same args ⇒ same result) and **definitional equations**
 from `f`'s body. This keeps queries decidable (EPR) but is deliberately *incomplete*:
 **totality is not asserted.** Nothing says every application `f(args)` has a result, nor
-that every element of a datatype sort is reachable by constructors. So a Z3 model may
-contain **"junk" elements** — an element of sort `nat` that is neither `Z` nor `S` of
-anything. A definitional equation such as `max (S a') (S b') = S (max a' b')` is *guarded by
-the constructor shape of its arguments* and its right-hand side can only fire once the
-witness `S (max a' b')` **exists** in the model. Two distinct absences then cause spurious
-counterexamples:
+that every element of a datatype sort is reachable by constructors. So an application can be
+**stuck** — its value left undefined, and hence arbitrary. A definitional equation such as
+`max (S a') (S b') = S (max a' b')` is *guarded by the constructor shape of its arguments* and
+its right-hand side can only fire once the witness `S (max a' b')` **exists** in the model.
+Two distinct absences then cause spurious counterexamples:
 
 - **A missing witness.** The constructor-of-a-recursive-subresult (`S (max a' b')`) never
-  gets materialized, so the guarded equation stays silent and the application lands on junk.
+  gets materialized, so the guarded equation stays silent and the application is stuck.
   This is what **instantiations** repair: `instantiate!(e)` forces `e`'s applied subterms
   into the model. Handled entirely by `caml-star-instantiate`.
 - **A missing fact.** No finite set of ground terms is enough — the obligation needs an
@@ -97,12 +96,14 @@ counterexamples; treat each independently.
 
 **4.1 Instantiation gate.** Invoke the **`caml-star-instantiate`** skill on the file. If it
 reports **DISCHARGED** (all VCs `verified`), you are done. Only proceed when it reports
-**SATURATED** — the frontier added nothing and VCs are still red. (Never hypothesize a
-lemma before instantiation has saturated: a gap that instantiation can close is not a
-missing fact.)
+**SATURATED** — no stuck application has constructor-shaped arguments (every remaining
+discrepancy is on an opaque argument), or the fixes regress forever, yet VCs are still red. (Never hypothesize a lemma before instantiation has saturated: a gap that
+instantiation can close is not a missing fact.)
 
-**4.2 Intake.** For each still-red VC, read the printed counterexample (the JSON model) and
-the `instantiated terms:` ledger, alongside the original program. These, not solver probing,
+**4.2 Intake.** For each still-red VC, read the printed counterexample — its source location
+(`at file:line:col`, which lemma to open), its `hypotheses:` (the arm's discriminators, calls,
+and guards — this is the goal-vs-hypothesis evidence the signatures use), the counterexample model, and
+the `instantiated terms:` list — alongside the original program. These, not solver probing,
 are your evidence.
 
 **4.3 Classify the gap.** Work through the signatures in `reference/lemma-signatures.md`
@@ -187,10 +188,12 @@ next action explicitly out of scope.
 `Nil`-arm VC still red. Its counterexample:
 
 ```
-"n": "nat!0", "xs": "Nil",
-"eq_nat": { …, "(nat!0, nat!0)": "false", … }
+n: nat!0,  xs: Nil,
+eq_nat: { (nat!0, nat!0) ↦ false, (nat!0, Z) ↦ true, … }
 ```
-and the ledger's goal group holds `count n (Cons n xs)` but nothing pins the guard inside it.
+no stuck application has constructor-shaped arguments here — the free `eq_nat(nat!0, nat!0) =
+false` is a guard on the opaque parameter `n`, so instantiation saturates and hands off — and
+nothing pins that guard.
 
 - **Classify.** `count n (Cons n xs)` unfolds to `if eq_nat n n then S (count n xs) else …`;
   the model sets `eq_nat(nat!0, nat!0) = false`, firing the wrong branch. **Guard lemma** (§2).
