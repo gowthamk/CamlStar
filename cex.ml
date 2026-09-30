@@ -213,14 +213,14 @@ let key_string (k : value list) : string =
 let rec json_of_value (indent : int) (v : value) : string =
   let pad n = String.make n ' ' in
   match v with
-  | Scalar s -> "\"" ^ escape s ^ "\""
+  | Scalar s -> "" ^ escape s ^ ""
   | SetOf vs -> "[" ^ String.concat ", " (List.map (json_of_value indent) vs) ^ "]"
   | Entries [] -> "{}"
   | Entries es ->
     let items =
       List.map
         (fun (k, v) ->
-           Printf.sprintf "%s\"%s\": %s" (pad (indent + 2)) (escape (key_string k)) (json_of_value (indent + 2) v))
+           Printf.sprintf "%s%s ↦ %s" (pad (indent + 2)) (escape (key_string k)) (json_of_value (indent + 2) v))
         es
     in
     "{\n" ^ String.concat ",\n" items ^ "\n" ^ pad indent ^ "}"
@@ -229,6 +229,6 @@ let to_json (c : t) : string =
   if c = [] then "{}"
   else
     let items =
-      List.map (fun (label, v) -> Printf.sprintf "  \"%s\": %s" (escape label) (json_of_value 2 v)) c
+      List.map (fun (label, v) -> Printf.sprintf "    %s: %s" (escape label) (json_of_value 4 v)) c
     in
-    "{\n" ^ String.concat ",\n" items ^ "\n}"
+      String.concat ",    \n" items

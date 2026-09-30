@@ -32,6 +32,12 @@ let scope_tyvars sc = List.rev_map (fun n -> Hashtbl.find sc.ty n) !(sc.tord)
 
 let mk_iff a b = mk_app (Tm_fvar iff_lid) [a; b]
 
+(* Lexing positions (from Menhir's $startpos/$endpos) to an Ast.range. *)
+let mk_range (s : Lexing.position) (e : Lexing.position) : range =
+  { file = s.Lexing.pos_fname;
+    rstart = (s.Lexing.pos_lnum, s.Lexing.pos_cnum - s.Lexing.pos_bol);
+    rend   = (e.Lexing.pos_lnum, e.Lexing.pos_cnum - e.Lexing.pos_bol) }
+
 let prim_base = function
   | "int" -> Some B_int | "bool" -> Some B_bool | "float" -> Some B_float
   | "unit" -> Some B_unit | "string" -> Some B_string | _ -> None
@@ -215,13 +221,14 @@ decl:
   | attrs=list(attribute) quals=list(qualifier) d=rawDecl
       { let sc = empty_scope () in
         let (sigel, xq) = d sc in
+        let rng = mk_range $startpos(d) $endpos(d) in
         let base = { sig_el = sigel; sig_quals = quals @ xq;
-                     sig_attrs = []; sig_rng = dummy_range } in
+                     sig_attrs = []; sig_rng = rng } in
         if List.exists (function A_expect_failure _ -> true | _ -> false) attrs then
           let codes =
             List.concat_map (function A_expect_failure c -> c | _ -> []) attrs in
           { sig_el = Sig_fail ([base], codes); sig_quals = [];
-            sig_attrs = []; sig_rng = dummy_range }
+            sig_attrs = []; sig_rng = rng }
         else base }
 
 qualifier:

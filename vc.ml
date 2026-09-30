@@ -33,7 +33,7 @@ let string_of_decl = function
 let string_of_t (v : t) : string =
   let buf = Buffer.create 256 in
   let line s = Buffer.add_string buf s; Buffer.add_char buf '\n' in
-  line (Printf.sprintf "(* VC: %s *)" v.reason);
+  line (Printf.sprintf "(* VC: %s  @ %s *)" v.reason (Ast.string_of_range v.range));
   List.iter (fun d -> line ("  decl  " ^ string_of_decl d)) v.decls;
   List.iter (fun a -> line ("  axiom " ^ Ast.string_of_term a)) v.axioms;
   List.iter

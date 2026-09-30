@@ -205,10 +205,11 @@ let collect_apps (ts : term list) : term list =
   in
   List.iter go ts; List.rev !acc
 
-(* The ledger grouped by source (goal / hypotheses / instantiate! hints). The
-   hypotheses group includes the constructor discriminators (Raven's "from patterns").
-   For *data* applications this equals what the backend actually materialises. *)
-let ledger_sections (vc : Vc.t) : (string * term list) list =
-  [ ("from the goal:", collect_apps [ vc.Vc.goal ]);
-    ("from the hypotheses:", collect_apps vc.Vc.hyps);
-    ("from the instantiate! hints:", collect_apps vc.Vc.instantiations) ]
+(* Every applied term the query already materialises as a witness — the goal, the
+   hypotheses (incl. constructor discriminators), and the instantiate! hints — as one
+   deduplicated list. Under the hybrid instantiation method the counterexample locates a
+   stuck (junk-valued) application and the source gives its one-step fix, so this list is
+   just the dedup / saturation check: a candidate already here is present and needs no
+   hint (a junk application's fix is, by construction, absent from it). *)
+let ledger_terms (vc : Vc.t) : term list =
+  collect_apps (vc.Vc.goal :: (vc.Vc.hyps @ vc.Vc.instantiations))

@@ -44,8 +44,8 @@ val smt_var : naming -> Ast.var -> string
    [naming] for its variables. *)
 val term_to_sexpr : naming -> Ast.term -> string
 
-(* The "instantiated terms" ledger: the user-function/constructor applications a VC
-   materialises, grouped [(label, terms)] by source (goal / hypotheses / hints), inner
-   applications first. This is the mechanical input for choosing instantiate! hints and
-   is printed both after a counterexample and as a comment atop each dumped query. *)
-val ledger_sections : Vc.t -> (string * Ast.term list) list
+(* The "instantiated terms" list: every user-function/constructor application a VC
+   already materialises as a witness (goal + hypotheses + instantiate! hints), inner
+   applications first, deduplicated. Printed after a counterexample and as a comment atop
+   each dumped query; it is the dedup / saturation check for choosing instantiate! hints. *)
+val ledger_terms : Vc.t -> Ast.term list

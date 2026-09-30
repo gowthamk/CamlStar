@@ -13,21 +13,27 @@ let vcs_path (src : string) : string =
   if Filename.check_suffix src ".cst" then Filename.chop_suffix src ".cst" ^ ".vcs"
   else src ^ ".vcs"
 
-(* ===== the "instantiated terms" ledger =====
-   The ground applied subterms (user functions / constructors) a VC materialises,
-   grouped by source (computed by [Smtlib.ledger_sections], shared with --dump-smt).
-   This is the mechanical input for choosing instantiate! hints: for a pinned
-   application in the ledger, unfold its definition one step and add whichever result
-   terms are ABSENT from the ledger. *)
+(* ===== the "instantiated terms" list =====
+   The ground applied subterms (user functions / constructors) a VC already materialises
+   as witnesses (computed by [Smtlib.ledger_terms], shared with --dump-smt). It is the
+   dedup / saturation check for instantiate! hints: a candidate already listed is present
+   (a stuck application's one-step fix is, by construction, absent from it). *)
+
+(* Orient the agent: the VC's source span (which lemma/branch in a large file) and the
+   branch's hypotheses (discriminators + recursive/lemma calls + guards) — the latter
+   otherwise only reachable via --print-vcs. *)
+let print_context (vc : Vc.t) : unit =
+  Printf.printf "  • Location: %s\n" (Ast.string_of_range vc.Vc.range);
+  Printf.printf "  • Hypotheses:\n";
+  match vc.Vc.hyps with
+  | [] -> Printf.printf "    (none)\n"
+  | hs -> List.iter (fun h -> Printf.printf "    %s\n" (Ast.string_of_term h)) hs
 
 let print_ledger (vc : Vc.t) : unit =
-  Printf.printf "instantiated terms:\n";
-  List.iter
-    (fun (label, terms) ->
-      Printf.printf "  %s\n" label;
-      if terms = [] then Printf.printf "    (none)\n"
-      else List.iter (fun t -> Printf.printf "    %s\n" (Ast.string_of_term t)) terms)
-    (Smtlib.ledger_sections vc)
+  Printf.printf "  • Instantiated terms:\n";
+  match Smtlib.ledger_terms vc with
+  | [] -> Printf.printf "  (none)\n"
+  | ts -> List.iter (fun t -> Printf.printf "    %s\n" (Ast.string_of_term t)) ts
 
 let () =
   let print_vcs = ref false in
@@ -64,21 +70,25 @@ let () =
        if !solve || !dump_smt <> None then begin
          let results = Smt.solve_module ?dump_dir:!dump_smt m vcs in
          let verified = ref 0 and failed = ref 0 and unknown = ref 0 and errored = ref 0 in
-         List.iter
-           (fun (vc, v) ->
+         List.iteri
+           (fun i (vc, v) ->
              (match v with
               | Smt.Verified -> incr verified
               | Smt.Failed _ -> incr failed
               | Smt.Unknown -> incr unknown
               | Smt.Solver_error _ -> incr errored);
              if !solve then begin
-               Printf.printf "  [%s] %s\n" (Smt.string_of_verdict v) vc.Vc.reason;
+               Printf.printf "  [VC#%s: %s] %s\n" (string_of_int @@ i+1) 
+                                  (Smt.string_of_verdict v) vc.Vc.reason;
                match v with
-               | Smt.Failed cex -> Printf.printf "%s\n" (Cex.to_json cex); print_ledger vc
+               | Smt.Failed cex ->
+                 print_context vc; 
+                 Printf.printf "  • Counterexample:\n%s\n" (Cex.to_json cex); 
+                 print_ledger vc
                | _ -> ()
              end)
            results;
-         Printf.printf "%d verified, %d counterexamples, %d unknown, %d errors (of %d VCs)\n"
+         Printf.printf "%d verified, %d failed, %d unknown, %d errors (of %d VCs)\n"
            !verified !failed !unknown !errored (List.length vcs);
          if !failed > 0 || !unknown > 0 then
            print_endline

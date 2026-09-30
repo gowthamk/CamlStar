@@ -69,6 +69,10 @@ and tscheme = { ts_vars : tyvar list; ts_typ : typ }
 (* ===== Top level ===== *)
 type range = { file : string; rstart : int * int; rend : int * int }
 let dummy_range = { file = ""; rstart = (0, 0); rend = (0, 0) }
+let string_of_range (r : range) : string =
+  if r.file = "" then "<unknown location>"
+  else Printf.sprintf "%s:%d:%d-%d:%d" r.file (fst r.rstart) (snd r.rstart)
+         (fst r.rend) (snd r.rend)
 
 type data_con  = { dc_name : lid; dc_typ : tscheme }
 type inductive = { ind_name : lid; ind_params : tyvar list; ind_ctors : data_con list }

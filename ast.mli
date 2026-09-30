@@ -80,6 +80,7 @@ and tscheme = { ts_vars : tyvar list; ts_typ : typ }         (* prenex HM scheme
 (* ===== Top level ===== *)
 type range = { file : string; rstart : int * int; rend : int * int }
 val dummy_range : range
+val string_of_range : range -> string   (* "file:sl:sc-el:ec", or "<unknown location>" *)
 
 type data_con  = { dc_name : lid; dc_typ : tscheme }   (* ctor type is an arrow returning B_app(ind, params) *)
 type inductive = { ind_name : lid; ind_params : tyvar list; ind_ctors : data_con list }

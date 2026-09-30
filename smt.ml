@@ -9,7 +9,7 @@ type verdict = Verified | Failed of Cex.t | Unknown | Solver_error of string
    *over*approximate the functions (no totality is asserted, to stay in EPR), so such
    a counterexample may be spurious rather than a genuine refutation. *)
 let string_of_verdict = function
-  | Verified -> "verified" | Failed _ -> "counterexample" | Unknown -> "unknown"
+  | Verified -> "verified" | Failed _ -> "failed" | Unknown -> "unknown"
   | Solver_error s -> "solver error: " ^ s
 
 (* ===== the transform pipeline =====
@@ -151,7 +151,7 @@ let dedup (lines : string list) : string list =
   List.filter (fun l -> if Hashtbl.mem seen l then false else (Hashtbl.add seen l (); true)) lines
 
 let build_query (m : modul) (ret_sort : string -> base_typ) (vc : Vc.t) : string * Smtlib.naming =
-  let ledger = Smtlib.ledger_sections vc in          (* from source terms, pre-skolem *)
+  let ledger = Smtlib.ledger_terms vc in             (* from source terms, pre-skolem *)
   let vc = Skolem.skolemize vc in                    (* hoist ∃-hyps to scope consts *)
   let naming = Smtlib.make_naming (List.map fst vc.Vc.scope) in  (* readable model names *)
   let anf_f = Anf.normalize (is_pred ret_sort) (vc_formula vc) in
@@ -165,16 +165,13 @@ let build_query (m : modul) (ret_sort : string -> base_typ) (vc : Vc.t) : string
   let buf = Buffer.create 1024 in
   let line s = Buffer.add_string buf s; Buffer.add_char buf '\n' in
   let assert_ a = line (Printf.sprintf "(assert %s)" (Smtlib.term_to_sexpr naming a)) in
-  (* Ledger: the applied subterms this query materialises, grouped by source. Mirrors
-     the block printed after a counterexample, so a dumped .smt2 records the mechanical
-     input for choosing instantiate! hints (unfold a pinned term, add absent results). *)
+  (* Ledger: the applied subterms this query already materialises as witnesses. Mirrors
+     the list printed after a counterexample, so a dumped .smt2 records the dedup /
+     saturation check for instantiate! hints. *)
   line "; instantiated terms:";
-  List.iter
-    (fun (label, terms) ->
-      line (Printf.sprintf ";   %s" label);
-      if terms = [] then line ";     (none)"
-      else List.iter (fun t -> line (Printf.sprintf ";     %s" (Ast.string_of_term t))) terms)
-    ledger;
+  (match ledger with
+   | [] -> line ";   (none)"
+   | ts -> List.iter (fun t -> line (Printf.sprintf ";   %s" (Ast.string_of_term t))) ts);
   line "(set-logic ALL)";
   line "(declare-sort Unit 0)";
   line "(declare-const unit_val Unit)";
