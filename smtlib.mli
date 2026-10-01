@@ -44,6 +44,13 @@ val smt_var : naming -> Ast.var -> string
    [naming] for its variables. *)
 val term_to_sexpr : naming -> Ast.term -> string
 
+(* Every user-function/constructor application occurring in the given terms, inner
+   applications first, deduplicated by printed form. Interpreted operators and connectives
+   are not themselves recorded, but their arguments are traversed. This is the notion of
+   "applied subterm" that materialisation works on, so [Cegqi] uses it to tell whether a
+   candidate would actually add anything. *)
+val collect_apps : Ast.term list -> Ast.term list
+
 (* The "instantiated terms" list: every user-function/constructor application a VC
    already materialises as a witness (goal + hypotheses + instantiate! hints), inner
    applications first, deduplicated. Printed after a counterexample and as a comment atop

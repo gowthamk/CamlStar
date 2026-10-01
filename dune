@@ -2,7 +2,7 @@
  (name camlstar)
  (wrapped false)
  (libraries z3)
- (modules ast lexer parser parse unify subst shape infer vc check smtlib axioms anf nnf relabs skolem cex smt))
+ (modules ast lexer parser parse unify subst shape infer vc check smtlib axioms anf nnf relabs skolem cex cegqi smt))
 
 (ocamllex lexer)
 
@@ -18,6 +18,11 @@
 (executable
  (name infer_test)
  (modules infer_test)
+ (libraries camlstar))
+
+(executable
+ (name cegqi_test)
+ (modules cegqi_test)
  (libraries camlstar))
 
 (executable

@@ -1,0 +1,21 @@
+module FuelLoop
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+(* Not structurally recursive: the argument GROWS. caml* does not check termination, so
+   this is accepted, and unrolling it never bottoms out — [grow (S n')] unfolds to
+   [grow (S (S n'))], then [grow (S (S (S n')))], and so on. Detecting that is the halting
+   problem, so CEGQI cannot saturate here; `fuel` is what stops it.
+
+   Expected: `failed (fuel exhausted)` — distinct from `failed (saturated)`, and prompt.
+   Run with --cegqi-trace to watch the tower grow one S per round. *)
+let rec grow x = match x with
+  | Z -> Z
+  | S x' -> grow (S (S x'))
+
+val grow_spec : n:nat -> Lemma(ensures grow n = Z)
+let rec grow_spec n = match n with
+  | Z -> ()
+  | S n' -> ()

@@ -33,7 +33,29 @@ val function_axioms : Ast.modul -> Ast.term list
 (* result base sort of each function/constructor, for relabs binder sorts *)
 val ret_sort_table : Ast.modul -> (string, Ast.base_typ) Hashtbl.t
 
-(* definitional equations (with bare calls, to be sent through the pipeline) for
-   every function with a body, a non-unit return, and no user-annotated refinement
-   — one equation per match/if leaf, as in raven's generate_axioms_from_body *)
+(* A definitional equation in structured form — one per match/if leaf:
+
+     forall de_binders. /\ de_guards  ==>  de_fn de_args = de_rhs
+
+   [de_args] are the LHS argument patterns the leaf was reached through (so they carry
+   the constructor shapes, e.g. [max (S x') (S y')]); [de_guards] hold both the ANF'd
+   let definitions ([g = le x h]) and the branch tests ([g = true]).
+
+   This is the single notion of "unfold one step" in the system: [definitional_axioms]
+   renders these for the solver, and [Cegqi] matches them to find the witnesses a stuck
+   application is missing. *)
+type defeq = {
+  de_fn      : string;
+  de_binders : (Ast.var * Ast.base_typ) list;
+  de_args    : Ast.term list;
+  de_guards  : Ast.term list;
+  de_rhs     : Ast.term;
+}
+
+(* structured equations for every function with a body, a non-unit return, and no
+   user-annotated refinement (bool-returning functions included) *)
+val definitional_equations : Ast.modul -> defeq list
+
+(* the same equations rendered as ordinary terms with bare calls, to be sent through the
+   ANF/NNF/relabs pipeline, as in raven's generate_axioms_from_body *)
 val definitional_axioms : Ast.modul -> Ast.term list

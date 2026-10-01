@@ -1,0 +1,56 @@
+module McCarthy91
+
+(* McCarthy's 91 function over an inductive nat, so the query stays in EPR and the solver
+   answers promptly — the point of the test is `fuel`, not solver divergence.
+   (An `int` version instead puts arithmetic under the quantified definitional axioms,
+   leaves EPR, and hangs Z3 on the first query before CEGQI ever runs.)
+
+   The constants are scaled down; only the *shape* matters: a guard on a computed
+   comparison, a nested recursive call, and a recursive argument that GROWS.
+
+     m91 n = if n > 3 then n - 1 else m91 (m91 (n + 2))
+
+   Like the original it is **total** — it returns 3 for n <= 4 and n-1 above — but it is not
+   structurally recursive, and caml* does not check termination. Unrolling it with a
+   symbolic argument therefore never bottoms out: `m91 n` regenerates `m91 (S (S n))`,
+   `m91 (S (S (S (S n))))`, … Detecting that is the halting problem, so CEGQI cannot
+   saturate and `fuel` is the only stopping condition.
+
+   What it actually shows, which is sharper than just "fuel works":
+
+   - At `--fuel 1` the verdict is `failed (fuel exhausted)` in 2 solver calls, promptly and
+     distinctly from `failed (saturated)` (the verdict that would mean "a lemma is needed").
+   - At the default fuel the verdict is `unknown`, because **fuel bounds the number of
+     rounds but not the cost of one query**. `m91`'s equations carry no constructor pattern
+     on the argument, so as a relational axiom it triggers on *every* nat term; each round's
+     new terms feed it and Z3's E-matching blows up. The per-query `--timeout` is what turns
+     that from a hang into an honest `unknown`.
+
+   Run with --cegqi-trace to watch the tower: round 1 adds `m91 (m91 (S (S n)))`, round 2
+   adds `m91 (m91 (S (S (S (S n)))))` and the nested `m91 (m91 (S (S (m91 (S (S n))))))`.
+   tests/fuel_loop.cst is the cheap companion test: its equations *are* constructor-guarded,
+   so it stays fast and reaches `failed (fuel exhausted)` at the default fuel. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec gt x y = match x with
+  | Z -> false
+  | S x' -> (match y with
+             | Z -> true
+             | S y' -> gt x' y')
+
+let rec pred x = match x with
+  | Z -> Z
+  | S x' -> x'
+
+let rec m91 n =
+  let p = gt n (S (S (S Z))) in
+  if p then pred n else m91 (m91 (S (S n)))
+
+(* Holds only for n <= 4; the VC is genuinely sat. What the test pins down is the
+   *verdict*: unrolling cannot settle it, so we must give up with fuel rather than claim
+   saturation. *)
+val m91_spec : n:nat -> Lemma(ensures m91 n = S (S (S Z)))
+let m91_spec n = ()

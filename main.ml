@@ -39,6 +39,10 @@ let () =
   let print_vcs = ref false in
   let solve = ref false in
   let dump_smt = ref None in
+  let cegqi = ref true in
+  let fuel = ref 3 in
+  let trace = ref false in
+  let timeout = ref 10000 in
   let file = ref None in
   let args = Sys.argv in
   let i = ref 1 in
@@ -47,12 +51,18 @@ let () =
      | "--print-vcs" -> print_vcs := true
      | "--solve" -> solve := true
      | "--dump-smt" -> incr i; if !i < Array.length args then dump_smt := Some args.(!i)
+     | "--no-cegqi" -> cegqi := false
+     | "--cegqi-trace" -> trace := true
+     | "--fuel" -> incr i; if !i < Array.length args then fuel := int_of_string args.(!i)
+     | "--timeout" -> incr i; if !i < Array.length args then timeout := int_of_string args.(!i)
      | arg -> file := Some arg);
     incr i
   done;
   match !file with
   | None ->
-    prerr_endline "usage: camlstar [--print-vcs] [--solve] [--dump-smt DIR] <file.cst>";
+    prerr_endline
+      "usage: camlstar [--print-vcs] [--solve] [--dump-smt DIR] \
+       [--no-cegqi] [--fuel N] [--cegqi-trace] [--timeout MS] <file.cst>";
     exit 2
   | Some fn ->
     (try
@@ -68,28 +78,32 @@ let () =
          Printf.printf "wrote %d VCs to %s\n" (List.length vcs) out
        end;
        if !solve || !dump_smt <> None then begin
-         let results = Smt.solve_module ?dump_dir:!dump_smt m vcs in
+         let results =
+           Smt.solve_module ?dump_dir:!dump_smt ~cegqi:!cegqi ~fuel:!fuel ~trace:!trace
+             ~timeout_ms:!timeout m vcs
+         in
          let verified = ref 0 and failed = ref 0 and unknown = ref 0 and errored = ref 0 in
          List.iteri
            (fun i (vc, v) ->
              (match v with
               | Smt.Verified -> incr verified
-              | Smt.Failed _ -> incr failed
+              | Smt.Saturated _ -> incr failed
+              | Smt.Fuel_exhausted _ -> incr unknown
               | Smt.Unknown -> incr unknown
               | Smt.Solver_error _ -> incr errored);
              if !solve then begin
-               Printf.printf "  [VC#%s: %s] %s\n" (string_of_int @@ i+1) 
+               Printf.printf "  [VC#%s: %s] %s\n" (string_of_int @@ i+1)
                                   (Smt.string_of_verdict v) vc.Vc.reason;
                match v with
-               | Smt.Failed cex ->
-                 print_context vc; 
-                 Printf.printf "  • Counterexample:\n%s\n" (Cex.to_json cex); 
+               | Smt.Saturated cex | Smt.Fuel_exhausted cex ->
+                 print_context vc;
+                 Printf.printf "  • Counterexample:\n%s\n" (Cex.to_json cex);
                  print_ledger vc
                | _ -> ()
              end)
            results;
-         Printf.printf "%d verified, %d failed, %d unknown, %d errors (of %d VCs)\n"
-           !verified !failed !unknown !errored (List.length vcs);
+         Printf.printf "%d verified, %d failed, %d unknown, %d errors (of %d VCs); %d solver call(s)\n"
+           !verified !failed !unknown !errored (List.length vcs) (Smt.solver_calls ());
          if !failed > 0 || !unknown > 0 then
            print_endline
              "note: unverified VCs may be spurious \

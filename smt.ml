@@ -2,14 +2,22 @@
 
 open Ast
 
-type verdict = Verified | Failed of Cex.t | Unknown | Solver_error of string
+type verdict =
+  | Verified
+  | Saturated of Cex.t          (* sat, and instantiation is exhausted: needs a lemma *)
+  | Fuel_exhausted of Cex.t     (* sat, and we gave up unrolling: verdict is "unknown" *)
+  | Unknown
+  | Solver_error of string
 
 (* [Failed cex] = z3 returned sat: a counterexample to the (negated) VC, reconstructed
    into a source-level [Cex.t]. Under relational abstraction the relations
    *over*approximate the functions (no totality is asserted, to stay in EPR), so such
    a counterexample may be spurious rather than a genuine refutation. *)
 let string_of_verdict = function
-  | Verified -> "verified" | Failed _ -> "failed" | Unknown -> "unknown"
+  | Verified -> "verified"
+  | Saturated _ -> "failed (saturated)"
+  | Fuel_exhausted _ -> "failed (fuel exhausted)"
+  | Unknown -> "unknown"
   | Solver_error s -> "solver error: " ^ s
 
 (* ===== the transform pipeline =====
@@ -120,12 +128,18 @@ let scope_decls (naming : Smtlib.naming) (scope : (var * base_typ) list) : strin
    scope) *)
 type raw = R_verified | R_sat of Z3.context * Z3.Model.model | R_unknown | R_error of string
 
-let run_z3 (query : string) : raw =
+let run_z3 ?(timeout_ms = 10000) (query : string) : raw =
   (* A fresh context per VC: each query redeclares its own sorts/relations/consts, so
      an isolated context avoids cross-VC symbol clashes. The returned [model] keeps
      its context alive (the OCaml bindings hold the reference), so it is safe to use
-     it after this returns. *)
-  let ctx = Z3.mk_context [ ("model", "true") ] in
+     it after this returns.
+
+     [timeout] matters because the EPR argument only bounds queries whose sorts are
+     uninterpreted: a definitional axiom with no constructor pattern on its argument
+     triggers on every term of its sort, so instantiating more terms can make a single
+     query blow up in E-matching. Without a timeout the tool would simply hang; with one,
+     such a query reports [unknown] and we move on. *)
+  let ctx = Z3.mk_context [ ("model", "true"); ("timeout", string_of_int timeout_ms) ] in
   try
     (* [parse_smtlib2_string] processes the declarations and returns the assertions
        as an AST vector; it does not execute [(check-sat)] — we drive that ourselves.
@@ -196,21 +210,63 @@ let sanitize_file (s : string) : string =
     if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') then c else '_')
     s
 
-let solve_module ?dump_dir (m : modul) (vcs : Vc.t list) : (Vc.t * verdict) list =
+(* how many queries the last [solve_module] sent to z3 (CEGQI sends one per round) *)
+let calls = ref 0
+let solver_calls () = !calls
+
+(* ===== the CEGQI loop =====
+   Solve; on sat, unfold the VC's applications one step and materialise whatever witnesses
+   are missing (Cegqi.candidates), then solve again. Stops when the VC is discharged, when
+   a round finds no new candidate (SATURATED — what remains needs a lemma, not a witness),
+   or when [fuel] rounds have passed. Each round deepens the unfolding by one level, so
+   [fuel] is simultaneously the depth and round bound: it is what stops an unbounded
+   S(a), S(S(a)), ... tower from a non-structurally-recursive definition, which cannot be
+   detected in general. *)
+let solve_module ?dump_dir ?(cegqi = true) ?(fuel = 3) ?(trace = false)
+    ?(timeout_ms = 10000) (m : modul) (vcs : Vc.t list) : (Vc.t * verdict) list =
   let ret_sort = make_ret_sort m in
+  calls := 0;
   List.mapi
-    (fun i vc ->
-      let query, naming = build_query m ret_sort vc in
-      (match dump_dir with
-       | Some dir ->
-         let fn = Printf.sprintf "%s/%s_%d.smt2" dir (sanitize_file vc.Vc.reason) (i + 1) in
-         let oc = open_out fn in output_string oc query; close_out oc
-       | None -> ());
-      let v = match run_z3 query with
-        | R_verified -> Verified
-        | R_unknown -> Unknown
-        | R_error s -> Solver_error s
-        | R_sat (ctx, model) -> Failed (Cex.of_model m vc naming ctx model)   (* reconstruct here *)
+    (fun i vc0 ->
+      let dump round query =
+        match dump_dir with
+        | Some dir ->
+          let base = Printf.sprintf "%s/%s_%d" dir (sanitize_file vc0.Vc.reason) (i + 1) in
+          let fn = if round = 0 then base ^ ".smt2"
+                   else Printf.sprintf "%s_r%d.smt2" base round in
+          let oc = open_out fn in output_string oc query; close_out oc
+        | None -> ()
       in
-      (vc, v))
+      let rec go round vc =
+        let query, naming = build_query m ret_sort vc in
+        dump round query;
+        incr calls;
+        match run_z3 ~timeout_ms query with
+        | R_verified -> (vc, Verified)
+        | R_unknown -> (vc, Unknown)
+        | R_error s -> (vc, Solver_error s)
+        | R_sat (ctx, model) ->
+          let cex = Cex.of_model m vc naming ctx model in
+          if not cegqi then (vc, Saturated cex)
+          else if round >= fuel then (vc, Fuel_exhausted cex)
+          else
+            let cands = Cegqi.candidates m vc in
+            if cands = [] then (vc, Saturated cex)
+            else begin
+              if trace then begin
+                Printf.printf "  · cegqi round %d of %s: +%d instantiation(s)\n"
+                  (round + 1) vc0.Vc.reason (List.length cands);
+                List.iter
+                  (fun t ->
+                    let d = match Cegqi.eval_in_cex cex t with
+                      | None -> "undefined in model" | Some _ -> "defined in model" in
+                    Printf.printf "      %s   (%s)\n" (Ast.string_of_term t) d)
+                  cands;
+                (* a progress trace is only useful if it appears as it happens *)
+                flush stdout
+              end;
+              go (round + 1) { vc with Vc.instantiations = vc.Vc.instantiations @ cands }
+            end
+      in
+      go 0 vc0)
     vcs

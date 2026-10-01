@@ -264,16 +264,35 @@ let val_map (m : modul) : (string, tscheme) Hashtbl.t =
     m.mod_decls;
   tbl
 
+(* A definitional equation in structured form, one per match/if leaf:
+     forall de_binders. /\ de_guards  ==>  de_fn de_args = de_rhs
+   [de_args] carry the constructor patterns the leaf was reached through, and
+   [de_guards] carry both the ANF'd let definitions (g = le x h) and the branch tests
+   (g = true). This is the single notion of "unfolding f one step" in the system:
+   [definitional_axioms] renders it for the solver, and [Cegqi] matches it to discover
+   the witnesses a stuck application needs. *)
+type defeq = {
+  de_fn      : string;
+  de_binders : (var * base_typ) list;
+  de_args    : term list;
+  de_guards  : term list;
+  de_rhs     : term;
+}
+
+let render_defeq (e : defeq) : term =
+  let eq = mk_eq (mk_app (Tm_fvar (lid_of_str e.de_fn)) e.de_args) e.de_rhs in
+  let g = match e.de_guards with [] -> eq | _ -> mk_imp (conj_terms e.de_guards) eq in
+  forall_sorted e.de_binders g
+
 (* one equation per match/if leaf of a function body *)
 let gen_equations (fname : string) (params : (var * base_typ) list)
-    (field_sorts : string -> base_typ list) (body : term) : term list =
-  let lhs (args_map : (int * term) list) : term =
-    mk_app (Tm_fvar (lid_of_str fname))
-      (List.map
-         (fun (p, _) -> match List.assoc_opt p.vid args_map with Some t -> t | None -> Tm_var p)
-         params)
+    (field_sorts : string -> base_typ list) (body : term) : defeq list =
+  let lhs_args (args_map : (int * term) list) : term list =
+    List.map
+      (fun (p, _) -> match List.assoc_opt p.vid args_map with Some t -> t | None -> Tm_var p)
+      params
   in
-  let rec walk args_map binders guards (e : term) : term list =
+  let rec walk args_map binders guards (e : term) : defeq list =
     match e with
     | Tm_match (scrut, branches) ->
       let sv = match scrut with
@@ -327,13 +346,12 @@ let gen_equations (fname : string) (params : (var * base_typ) list)
         | _ -> B_int in
       walk args_map (binders @ [ (g, gsort) ]) (guards @ [ mk_eq (Tm_var g) lb.lb_def ]) body
     | _ ->
-      let eq = mk_eq (lhs args_map) e in
-      let g = match guards with [] -> eq | _ -> mk_imp (conj_terms guards) eq in
-      [ forall_sorted binders g ]
+      [ { de_fn = fname; de_binders = binders; de_args = lhs_args args_map;
+          de_guards = guards; de_rhs = e } ]
   in
   walk (List.map (fun (p, _) -> (p.vid, Tm_var p)) params) params [] body
 
-let definitional_axioms (m : modul) : term list =
+let definitional_equations (m : modul) : defeq list =
   let vals = val_map m in
   let fields = ctor_fields_table m in
   let field_sorts cname =
@@ -361,3 +379,6 @@ let definitional_axioms (m : modul) : term list =
           lbs.lbs
       | _ -> [])
     m.mod_decls
+
+let definitional_axioms (m : modul) : term list =
+  List.map render_defeq (definitional_equations m)
