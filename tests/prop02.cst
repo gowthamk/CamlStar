@@ -32,10 +32,6 @@ let rec append xs ys = match xs with
   | Cons x xs' -> let l = append xs' ys in
                     Cons x l
 
-(*
-val((n: Nat, xs: NList, ys: NList) ->
-        Lemma(add(count(n, xs), count(n, ys)) == count(n, app(xs, ys))))
-*)
 val tip_two: xs:natlist -> ys:natlist ->
         Lemma(ensures add (count xs) (count ys) = count (append xs ys))
 let rec tip_two xs ys = match xs with

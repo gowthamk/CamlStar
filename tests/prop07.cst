@@ -6,7 +6,7 @@ type nat =
 
 let rec add x y = match x with
   | Z -> y
-  | S x' -> S (add x' y)
+  | S x' -> let p = S (add x' y) in p
 
 let rec sub x y = match x with
   | Z -> Z

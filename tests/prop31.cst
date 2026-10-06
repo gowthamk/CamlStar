@@ -16,5 +16,5 @@ let rec tip_31 a b c = match a with
   | S a' -> (match b with
              | Z -> ()
              | S b' -> (match c with
-                        | Z -> let _ = instantiate!(S (min a' b')) in ()
+                        | Z -> ()
                         | S c' -> tip_31 a' b' c'))
