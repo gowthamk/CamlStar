@@ -96,6 +96,26 @@ let tip_04 n xs = match xs with
   | Cons x xs' -> tip_04 n xs'
 |}
 
+(* A derived shape. [double (len xs)] matches on its argument; under [xs = Cons h t],
+   [len xs] unfolds to the constructor term [S (len t)]. Only with that result recorded as
+   the shape of [len xs] can [double]'s equation fire. The lemma is false; only candidates
+   are computed here, never the solver. *)
+let derived = {|
+module Derived
+type nat = | Z : nat | S : nat -> nat
+type natlist = | Nil : natlist | Cons : nat -> natlist -> natlist
+let rec len xs = match xs with
+  | Nil -> Z
+  | Cons h t -> S (len t)
+let rec double x = match x with
+  | Z -> Z
+  | S x' -> S (S (double x'))
+val tip : xs:natlist -> Lemma(ensures double (len xs) = len xs)
+let rec tip xs = match xs with
+  | Nil -> ()
+  | Cons h t -> tip t
+|}
+
 let () =
   print_endline "cegqi_test";
 
@@ -127,8 +147,18 @@ let () =
     (List.mem "Cons h2 (insort x t2)" c77) (String.concat " | " c77);
   check "prop77 proposes the guard call le x h"
     (List.exists (fun s -> s = "le x h") c77) (String.concat " | " c77);
-  check "prop77 unfolds the sorted predicate too"
-    (List.mem "sorted (Cons h2 t2)" c77) (String.concat " | " c77);
+  (* [sorted (Cons h2 t2)] is [sorted t] under the arm's [t = Cons h2 t2]: present under
+     its expanded form, so it is not proposed again (the solver relates the two through
+     the hypothesis) *)
+  check "prop77 does not re-propose sorted t under its expanded form"
+    (not (List.mem "sorted (Cons h2 t2)" c77)) (String.concat " | " c77);
+
+  (* --- derived shapes: an unguarded constructor result lets the outer application fire --- *)
+  let cd = all_candidates derived in
+  check "derived shape: len xs = S (len t) is proposed"
+    (List.mem "S (len t)" cd) (String.concat " | " cd);
+  check "derived shape: double (len xs) unfolds through it"
+    (List.mem "S (S (double (len t)))" cd) (String.concat " | " cd);
 
   (* --- saturation: nothing to instantiate when the gap is a lemma --- *)
   let c04 = all_candidates prop04 in

@@ -36,12 +36,16 @@ let rec conjuncts (t : term) : term list =
   | Tm_fvar l, [ a; b ] when lid_eq l and_lid -> conjuncts a @ conjuncts b
   | _ -> [ t ]
 
-let shapes (m : modul) (vc : Vc.t) : (int * term) list =
+(* The table is keyed by term, not by variable id, so that a shape can belong to an
+   application as well as to a variable (a derived shape, [len t ↦ S (len t2)]); the
+   first entry for a key wins. *)
+let add_shape (sh : (term * term) list) (k : term) (s : term) : (term * term) list =
+  if List.exists (fun (k', _) -> Subst.alpha_equal_term k' k) sh then sh else (k, s) :: sh
+
+let shapes (m : modul) (vc : Vc.t) : (term * term) list =
   let ctors = ctor_names m in
   let acc = ref [] in
-  let add (v : var) (t : term) =
-    if not (List.mem_assoc v.vid !acc) then acc := (v.vid, t) :: !acc
-  in
+  let add (v : var) (t : term) = acc := add_shape !acc (Tm_var v) t in
   List.iter
     (fun h ->
       List.iter
@@ -58,18 +62,18 @@ let shapes (m : modul) (vc : Vc.t) : (int * term) list =
   List.rev !acc
 
 (* Expand known shapes inside a term, so an equation's constructor patterns have something
-   to match: [xs] with [xs = Cons h t] and [t = Nil] becomes [Cons h Nil]. Bounded, so a
+   to match: [xs] with [xs = Cons h t] and [t = Nil] becomes [Cons h Nil]. Any subterm
+   with an entry is rewritten, a variable or an application alike. Bounded, so a
    pathological cyclic shape cannot loop. *)
-let rec apply_shapes (sh : (int * term) list) (fuel : int) (t : term) : term =
+let rec apply_shapes (sh : (term * term) list) (fuel : int) (t : term) : term =
   if fuel <= 0 then t
   else
-    match t with
-    | Tm_var v ->
-      (match List.assoc_opt v.vid sh with
-       | Some s -> apply_shapes sh (fuel - 1) s
-       | None -> t)
-    | Tm_app (f, a) -> Tm_app (apply_shapes sh fuel f, apply_shapes sh fuel a)
-    | _ -> t
+    match List.find_opt (fun (k, _) -> Subst.alpha_equal_term k t) sh with
+    | Some (_, s) -> apply_shapes sh (fuel - 1) s
+    | None ->
+      (match t with
+       | Tm_app (f, a) -> Tm_app (apply_shapes sh fuel f, apply_shapes sh fuel a)
+       | _ -> t)
 
 (* ===== evaluating a term in the counterexample ===== *)
 
@@ -162,7 +166,12 @@ let externalize (fns : (string, unit) Hashtbl.t) (t : term) : term =
   in
   go t
 
-let unroll (eqs : Axioms.defeq list) (sh : (int * term) list) (t : term) : term list =
+(* One matched equation, instantiated: its right-hand side and the guard calls on the
+   path to that leaf. [guards = []] means the equation is unconditional — its result is
+   what the application equals, not one alternative among several. *)
+type unfolding = { rhs : term; guards : term list }
+
+let unroll (eqs : Axioms.defeq list) (sh : (term * term) list) (t : term) : unfolding list =
   let h, args = head_spine t [] in
   if args = [] then []
   else
@@ -172,26 +181,42 @@ let unroll (eqs : Axioms.defeq list) (sh : (int * term) list) (t : term) : term 
       let fns = Hashtbl.create 16 in
       List.iter (fun (e : Axioms.defeq) -> Hashtbl.replace fns e.Axioms.de_fn ()) eqs;
       let args' = List.map (apply_shapes sh 8) args in
-      List.concat_map
+      List.filter_map
         (fun (e : Axioms.defeq) ->
-          if e.Axioms.de_fn <> f then []
+          if e.Axioms.de_fn <> f then None
           else
             match match_args e.Axioms.de_binders e.Axioms.de_args args' with
-            | None -> []
+            | None -> None
             | Some s ->
-              List.map (externalize fns)
-                (Subst.subst_term s e.Axioms.de_rhs :: guard_calls s e.Axioms.de_guards))
+              Some
+                { rhs = externalize fns (Subst.subst_term s e.Axioms.de_rhs);
+                  guards = List.map (externalize fns) (guard_calls s e.Axioms.de_guards) })
         eqs
+
+(* The flat list of terms an unfolding needs: the right-hand side and the guard calls. *)
+let unfolding_terms (u : unfolding) : term list = u.rhs :: u.guards
 
 (* ===== candidate selection ===== *)
 
 let candidates (m : modul) (vc : Vc.t) : term list =
   let eqs = Axioms.definitional_equations m in
-  let sh = shapes m vc in
+  let ctors = ctor_names m in
+  (* grows within the round with derived shapes (below) *)
+  let sh = ref (shapes m vc) in
   let frontier = Smtlib.ledger_terms vc in
-  (* what the query already materialises, by printed form *)
+  (* What the query already materialises, by printed form — under both the term as written
+     and its shape-expanded form, so an unfolding of a present term is recognised as present:
+     [sorted (Cons h2 t2)] is [sorted t] under [t = Cons h2 t2], and the solver already
+     relates the two through the hypothesis. The table is consulted as the round's shapes
+     grow, so the expanded key follows the derived shapes too. *)
   let present : (string, unit) Hashtbl.t = Hashtbl.create 64 in
-  List.iter (fun t -> Hashtbl.replace present (Ast.string_of_term t) ()) frontier;
+  let keys t =
+    let w = Ast.string_of_term t and x = Ast.string_of_term (apply_shapes !sh 8 t) in
+    if w = x then [ w ] else [ w; x ]
+  in
+  let is_present t = List.exists (Hashtbl.mem present) (keys t) in
+  let mark t = List.iter (fun k -> Hashtbl.replace present k ()) (keys t) in
+  List.iter mark frontier;
   (* a candidate must be writable from the VC's scope, else it would render as an unbound
      symbol; a witness that cannot be named here is exactly the lemma case *)
   let in_scope (v : var) = List.exists (fun (s, _) -> s.vid = v.vid) vc.Vc.scope in
@@ -202,22 +227,28 @@ let candidates (m : modul) (vc : Vc.t) : term list =
      nothing: counting that as progress would keep the loop alive and burn fuel on a VC that
      has in fact saturated. *)
   let adds_something t =
-    List.exists
-      (fun sub -> not (Hashtbl.mem present (Ast.string_of_term sub)))
-      (Smtlib.collect_apps [ t ])
+    List.exists (fun sub -> not (is_present sub)) (Smtlib.collect_apps [ t ])
   in
   let add t =
-    let s = Ast.string_of_term t in
-    if (not (Hashtbl.mem present s)) && closed t && adds_something t then begin
-      Hashtbl.replace present s ();
+    if (not (is_present t)) && closed t && adds_something t then begin
+      mark t;
       (* the subterms it materialises are present from now on, too *)
-      List.iter
-        (fun sub -> Hashtbl.replace present (Ast.string_of_term sub) ())
-        (Smtlib.collect_apps [ t ]);
+      List.iter mark (Smtlib.collect_apps [ t ]);
       out := t :: !out
     end
   in
   (* [ledger_terms] is inner-first, so inner applications are unfolded before the outer
-     ones that are stuck only because of them *)
-  List.iter (fun app -> List.iter add (unroll eqs sh app)) frontier;
+     ones that are stuck only because of them. An unfolding whose equation has no guard
+     and whose result is a constructor term fixes the application's shape — a *derived*
+     shape, [len t ↦ S (len t2)] — recorded at once so that an outer application matching
+     on it ([double (len t)]) can unfold in the same round. A guarded result is one
+     alternative among several and is not a shape. *)
+  List.iter
+    (fun app ->
+      List.iter
+        (fun (u : unfolding) ->
+          List.iter add (unfolding_terms u);
+          if u.guards = [] && is_ctor_term ctors u.rhs then sh := add_shape !sh app u.rhs)
+        (unroll eqs !sh app))
+    frontier;
   List.rev !out
