@@ -72,9 +72,27 @@ let rec build_quant qk binders body sc =
     let (v, tyo, sc') = b sc in
     Tm_quant { qk; qv = v; qty = tyo; qbody = build_quant qk rest body sc' }
 
+(* The equation generator (axioms.ml) reads a match only on a *variable*. Bind any other
+   scrutinee or guard to a fresh variable first, as the hand-written sources do with
+   `let p = g in if p`; inference gives the let its scheme like a user-written one. *)
+let bind_scrut (e : term) (k : term -> term) : term =
+  match e with
+  | Tm_var _ -> k e
+  | _ ->
+    let v = fresh_var "s" in
+    Tm_let ({ lb_rec = false;
+              lbs = [ { lb_name = v; lb_scheme = None; lb_def = e; lb_measure = None } ] },
+            k (Tm_var v))
+
+let rec bind_scruts (es : term list) (k : term list -> term) : term =
+  match es with
+  | [] -> k []
+  | e :: rest -> bind_scrut e (fun e' -> bind_scruts rest (fun rest' -> k (e' :: rest')))
+
 let mk_if c a b =
-  Tm_match (c, [ { br_pat = P_const (C_bool true);  br_when = None; br_body = a };
-                 { br_pat = P_const (C_bool false); br_when = None; br_body = b } ])
+  bind_scrut c (fun c ->
+    Tm_match (c, [ { br_pat = P_const (C_bool true);  br_when = None; br_body = a };
+                   { br_pat = P_const (C_bool false); br_when = None; br_body = b } ]))
 
 (* ===== multi-scrutinee match: desugar to nested single-scrutinee matches =====
    A row is (patterns, when-guard, body); [desugar_match scruts rows] compiles the
@@ -368,9 +386,10 @@ term:
   | IF c=term THEN a=term ELSE b=term
       { fun sc -> mk_if (c sc) (a sc) (b sc) }
   | MATCH e=term WITH bs=branches
-      { fun sc -> Tm_match (e sc, bs sc) }
+      { fun sc -> bind_scrut (e sc) (fun e -> Tm_match (e, bs sc)) }
   | MATCH e=term COMMA es=separated_nonempty_list(COMMA, term) WITH bs=multibranches
-      { fun sc -> desugar_match (List.map (fun f -> f sc) (e :: es)) (bs sc) }
+      { fun sc -> bind_scruts (List.map (fun f -> f sc) (e :: es))
+                    (fun scruts -> desugar_match scruts (bs sc)) }
   | FORALL bs=nonempty_list(binder) DOT e=term
       { fun sc -> build_quant Forall bs e sc }
   | EXISTS bs=nonempty_list(binder) DOT e=term
