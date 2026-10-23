@@ -19,11 +19,24 @@ let vcs_path (src : string) : string =
    dedup / saturation check for instantiate! hints: a candidate already listed is present
    (a stuck application's one-step fix is, by construction, absent from it). *)
 
-(* Orient the agent: the VC's source span (which lemma/branch in a large file) and the
-   branch's hypotheses (discriminators + recursive/lemma calls + guards) — the latter
-   otherwise only reachable via --print-vcs. *)
-let print_context (vc : Vc.t) : unit =
+(* Orient the agent: the VC's source span (which lemma in a large file), the arm it
+   belongs to (the constructor discriminators among its hypotheses, in path order, e.g.
+   `Add e1 e2 / Ok v1 / Ok v2`) and the branch's hypotheses (discriminators +
+   recursive/lemma calls + guards) — the latter otherwise only reachable via --print-vcs. *)
+let print_context (ctors : string list) (vc : Vc.t) : unit =
+  let rec flatten t acc = match t with Ast.Tm_app (f, a) -> flatten f (a :: acc) | _ -> (t, acc) in
+  let discriminator h =
+    match flatten h [] with
+    | Ast.Tm_fvar l, [ Ast.Tm_var _; rhs ] when Ast.lid_eq l Ast.eq_lid ->
+      (match flatten rhs [] with
+       | Ast.Tm_fvar c, _ when List.mem c.Ast.bname ctors -> Some (Ast.string_of_term rhs)
+       | _ -> None)
+    | _ -> None
+  in
   Printf.printf "  • Location: %s\n" (Ast.string_of_range vc.Vc.range);
+  (match List.filter_map discriminator vc.Vc.hyps with
+   | [] -> ()
+   | ds -> Printf.printf "  • Branch: %s\n" (String.concat " / " ds));
   Printf.printf "  • Hypotheses:\n";
   match vc.Vc.hyps with
   | [] -> Printf.printf "    (none)\n"
@@ -83,6 +96,14 @@ let () =
              ~timeout_ms:!timeout m vcs
          in
          let verified = ref 0 and failed = ref 0 and unknown = ref 0 and errored = ref 0 in
+         let ctors =
+           List.concat_map
+             (fun se -> match se.Ast.sig_el with
+                | Ast.Sig_inductive ind ->
+                  List.map (fun dc -> dc.Ast.dc_name.Ast.bname) ind.Ast.ind_ctors
+                | _ -> [])
+             m.Ast.mod_decls
+         in
          List.iteri
            (fun i (vc, v) ->
              (match v with
@@ -96,9 +117,10 @@ let () =
                                   (Smt.string_of_verdict v) vc.Vc.reason;
                match v with
                | Smt.Saturated cex | Smt.Fuel_exhausted cex ->
-                 print_context vc;
+                 print_context ctors vc;
                  Printf.printf "  • Counterexample:\n%s\n" (Cex.to_json cex);
                  print_ledger vc
+               | Smt.Unknown -> print_context ctors vc
                | _ -> ()
              end)
            results;
