@@ -135,6 +135,7 @@ let close_type (delta : env) (t : typ) : typ =
 (* ===== global signature + module axioms ===== *)
 
 let genv : (string, tscheme) Hashtbl.t = Hashtbl.create 64
+let ind_tbl : (string, data_con list) Hashtbl.t = Hashtbl.create 16
 let module_axioms : term list ref = ref []
 
 let cur_range : range ref = ref dummy_range
@@ -163,6 +164,16 @@ let peel_arrows (ty : typ) (n : int) : (var * typ) list * typ =
       | T_refine _ -> raise (Check_error "applied to too many arguments")
   in
   go ty n
+
+(* the constructors of a datatype scrutinee's type, with arities; [] for any other type *)
+let ctors_of_typ (ts : typ) : (lid * int) list =
+  let rec arity = function T_arrow { acod; _ } -> 1 + arity acod | T_refine _ -> 0 in
+  match ts with
+  | T_refine { rbase = B_app (l, _); _ } ->
+    (match Hashtbl.find_opt ind_tbl l.bname with
+     | Some dcs -> List.map (fun dc -> (dc.dc_name, arity dc.dc_typ.ts_typ)) dcs
+     | None -> [])
+  | _ -> []
 
 let merge_binds (a : (tyvar * typ) list) (b : (tyvar * typ) list) : (tyvar * typ) list =
   List.fold_left
@@ -215,6 +226,7 @@ and synth (env : env) (e : term) : typ * Vc.t list =
     (close_type delta ty, v @ v2)
   | Tm_match (scrut, brs) ->
     let ts, v0 = synth env scrut in
+    let brs = Exhaust.expand (ctors_of_typ ts) scrut brs in
     let v = fresh_var "v" in
     let base = ref None in
     let disjuncts, vcs =
@@ -306,6 +318,7 @@ and check (env : env) (e : term) (t : typ) : Vc.t list =
     v @ check (delta @ env) body t
   | Tm_match (scrut, brs), _ ->
     let ts, v0 = synth env scrut in
+    let brs = Exhaust.expand (ctors_of_typ ts) scrut brs in
     v0 @ List.concat_map (check_branch env scrut ts t) brs
   | _ ->
     let s, v = synth env e in
@@ -406,12 +419,14 @@ and extend_lets (env : env) (lbs : letbindings) : binding list * Vc.t list =
 
 let check_module (m : modul) : Vc.t list =
   Hashtbl.reset genv;
+  Hashtbl.reset ind_tbl;
   module_axioms := [];
   (* pass 1: populate the global signature and collect axioms *)
   List.iter
     (fun se ->
       match se.sig_el with
       | Sig_inductive ind ->
+        Hashtbl.replace ind_tbl ind.ind_name.bname ind.ind_ctors;
         List.iter (fun dc -> Hashtbl.replace genv dc.dc_name.bname dc.dc_typ) ind.ind_ctors
       | Sig_val (l, sch) -> Hashtbl.replace genv l.bname sch
       | Sig_let lbs ->

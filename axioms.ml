@@ -286,7 +286,8 @@ let render_defeq (e : defeq) : term =
 
 (* one equation per match/if leaf of a function body *)
 let gen_equations (fname : string) (params : (var * base_typ) list)
-    (field_sorts : string -> base_typ list) (body : term) : defeq list =
+    (field_sorts : string -> base_typ list) (ctors_of : string -> (lid * int) list)
+    (body : term) : defeq list =
   let lhs_args (args_map : (int * term) list) : term list =
     List.map
       (fun (p, _) -> match List.assoc_opt p.vid args_map with Some t -> t | None -> Tm_var p)
@@ -299,6 +300,12 @@ let gen_equations (fname : string) (params : (var * base_typ) list)
         | Tm_var v -> v
         | _ -> failwith "defeq: match scrutinee is not a variable"
       in
+      (* a default arm on a datatype scrutinee stands for the constructors the earlier
+         arms did not name; expand it so every arm below is guarded by a constructor *)
+      let ctors = match List.find_opt (fun (v, _) -> v.vid = sv.vid) binders with
+        | Some (_, B_app (l, _)) -> ctors_of l.bname
+        | _ -> [] in
+      let branches = Exhaust.expand ctors scrut branches in
       List.concat_map
         (fun (br : branch) ->
           match br.br_pat with
@@ -356,6 +363,14 @@ let definitional_equations (m : modul) : defeq list =
   let fields = ctor_fields_table m in
   let field_sorts cname =
     match Hashtbl.find_opt fields cname with Some s -> s | None -> [] in
+  let ctors = Hashtbl.create 16 in
+  List.iter
+    (fun ind ->
+      Hashtbl.replace ctors ind.ind_name.bname
+        (List.map (fun dc -> (dc.dc_name, List.length (fun_doms dc.dc_typ.ts_typ))) ind.ind_ctors))
+    (inductives m);
+  let ctors_of tname =
+    match Hashtbl.find_opt ctors tname with Some cs -> cs | None -> [] in
   List.concat_map
     (fun se ->
       match se.sig_el with
@@ -373,7 +388,7 @@ let definitional_equations (m : modul) : defeq list =
               when fun_result declared <> B_unit && not (has_refinement declared) ->
               let dom_bases = fun_doms declared in
               let vars, inner = peel_lams (List.length dom_bases) lb.lb_def in
-              (try gen_equations name (List.combine vars dom_bases) field_sorts inner
+              (try gen_equations name (List.combine vars dom_bases) field_sorts ctors_of inner
                with Invalid_argument _ -> [])
             | _ -> [])
           lbs.lbs
