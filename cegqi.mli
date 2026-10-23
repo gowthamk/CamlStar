@@ -40,7 +40,8 @@ type unfolding = { rhs : Ast.term; guards : Ast.term list }
    head whose argument patterns match (after expanding [shapes]). Returns [] when no
    equation matches — in particular when an argument has no constructor shape to match
    against. *)
-val unroll : Axioms.defeq list -> (Ast.term * Ast.term) list -> Ast.term -> unfolding list
+val unroll :
+  Ast.modul -> Axioms.defeq list -> (Ast.term * Ast.term) list -> Ast.term -> unfolding list
 
 (* The terms an unfolding needs materialised: its right-hand side and its guard calls. *)
 val unfolding_terms : unfolding -> Ast.term list

@@ -140,15 +140,28 @@ let match_args (binders : (var * base_typ) list) (pats : term list) (concrete : 
 (* ===== unrolling ===== *)
 
 (* The guard calls of an equation: an ANF'd let shows up as [g = def], and [def] is the
-   call the branch inspects (the skill's "guard term"). Branch tests [g = true] carry no
-   call and are skipped. *)
-let guard_calls (s : (var * term) list) (guards : term list) : term list =
-  List.filter_map
+   call the branch inspects (the skill's "guard term"). When [g] is a datatype scrutinee
+   the arm's pattern has already replaced it, so the guard reads [C(fields) = def]: the
+   pattern side, a constructor over variables only, is skipped and [def] is still taken.
+   Branch tests [g = true] carry no call and are skipped. *)
+let guard_calls (ctors : (string, unit) Hashtbl.t) (s : (var * term) list)
+    (guards : term list) : term list =
+  let is_pattern t =
+    match head_spine t [] with
+    | Tm_fvar l, args ->
+      Hashtbl.mem ctors l.bname
+      && List.for_all (function Tm_var _ -> true | _ -> false) args
+    | _ -> false
+  in
+  let is_def t =
+    match t with Tm_const _ | Tm_var _ -> false | _ -> not (is_pattern t)
+  in
+  List.concat_map
     (fun g ->
       match head_spine g [] with
-      | Tm_fvar l, [ Tm_var _; def ] when lid_eq l eq_lid ->
-        (match def with Tm_const _ -> None | _ -> Some (Subst.subst_term s def))
-      | _ -> None)
+      | Tm_fvar l, [ a; b ] when lid_eq l eq_lid ->
+        List.map (Subst.subst_term s) (List.filter is_def [ a; b ])
+      | _ -> [])
     guards
 
 (* Inside a function body a recursive call is a [Tm_var] bound by the enclosing [let rec],
@@ -171,13 +184,15 @@ let externalize (fns : (string, unit) Hashtbl.t) (t : term) : term =
    what the application equals, not one alternative among several. *)
 type unfolding = { rhs : term; guards : term list }
 
-let unroll (eqs : Axioms.defeq list) (sh : (term * term) list) (t : term) : unfolding list =
+let unroll (m : modul) (eqs : Axioms.defeq list) (sh : (term * term) list) (t : term)
+  : unfolding list =
   let h, args = head_spine t [] in
   if args = [] then []
   else
     match head_name h with
     | None -> []
     | Some f ->
+      let ctors = ctor_names m in
       let fns = Hashtbl.create 16 in
       List.iter (fun (e : Axioms.defeq) -> Hashtbl.replace fns e.Axioms.de_fn ()) eqs;
       let args' = List.map (apply_shapes sh 8) args in
@@ -190,7 +205,7 @@ let unroll (eqs : Axioms.defeq list) (sh : (term * term) list) (t : term) : unfo
             | Some s ->
               Some
                 { rhs = externalize fns (Subst.subst_term s e.Axioms.de_rhs);
-                  guards = List.map (externalize fns) (guard_calls s e.Axioms.de_guards) })
+                  guards = List.map (externalize fns) (guard_calls ctors s e.Axioms.de_guards) })
         eqs
 
 (* The flat list of terms an unfolding needs: the right-hand side and the guard calls. *)
@@ -249,6 +264,6 @@ let candidates (m : modul) (vc : Vc.t) : term list =
         (fun (u : unfolding) ->
           List.iter add (unfolding_terms u);
           if u.guards = [] && is_ctor_term ctors u.rhs then sh := add_shape !sh app u.rhs)
-        (unroll eqs !sh app))
+        (unroll m eqs !sh app))
     frontier;
   List.rev !out

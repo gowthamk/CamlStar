@@ -116,6 +116,25 @@ let rec tip xs = match xs with
   | Cons h t -> tip t
 |}
 
+(* A match on a call's result. [found] scrutinises [lookup x en]; in the [Found v] arm the
+   equation's guard reads [Found v = lookup x en], and the engine must still propose the
+   call at the arm's instance, [lookup x (ECons x v en)], or the goal saturates with one
+   witness missing. *)
+let through_call = {|
+module ThroughCall
+type nat = | Z : nat | S : nat -> nat
+type look = | Found : nat -> look | Missing : look
+type env = | ENil : env | ECons : nat -> nat -> env -> env
+let rec lookup x en = match en with
+  | ENil -> Missing
+  | ECons y w r -> let p = (x = y) in if p then Found w else lookup x r
+let found x en = let l = lookup x en in match l with
+  | Found w -> true
+  | Missing -> false
+val t : x:nat -> v:nat -> en:env -> Lemma(ensures found x (ECons x v en) = true)
+let t x v en = ()
+|}
+
 let () =
   print_endline "cegqi_test";
 
@@ -159,6 +178,11 @@ let () =
     (List.mem "S (len t)" cd) (String.concat " | " cd);
   check "derived shape: double (len xs) unfolds through it"
     (List.mem "S (S (double (len t)))" cd) (String.concat " | " cd);
+
+  (* --- a match on a call's result: the scrutinee call is proposed at the arm's instance --- *)
+  let ct = all_candidates through_call in
+  check "match on a call's result proposes the scrutinee call"
+    (List.mem "lookup x (ECons x v en)" ct) (String.concat " | " ct);
 
   (* --- saturation: nothing to instantiate when the gap is a lemma --- *)
   let c04 = all_candidates prop04 in
