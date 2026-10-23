@@ -139,30 +139,88 @@ let match_args (binders : (var * base_typ) list) (pats : term list) (concrete : 
 
 (* ===== unrolling ===== *)
 
-(* The guard calls of an equation: an ANF'd let shows up as [g = def], and [def] is the
-   call the branch inspects (the skill's "guard term"). When [g] is a datatype scrutinee
-   the arm's pattern has already replaced it, so the guard reads [C(fields) = def]: the
-   pattern side, a constructor over variables only, is skipped and [def] is still taken.
-   Branch tests [g = true] carry no call and are skipped. *)
-let guard_calls (ctors : (string, unit) Hashtbl.t) (s : (var * term) list)
-    (guards : term list) : term list =
+(* Split a guard equality [L = R] into its two sides, if it is one. *)
+let eq_sides (g : term) : (term * term) option =
+  match head_spine g [] with
+  | Tm_fvar l, [ a; b ] when lid_eq l eq_lid -> Some (a, b)
+  | _ -> None
+
+(* [gen_equations] ANF-flattens a body, so a leaf's [de_guards] hold both the let-bindings
+   that build its result and the conditions that select it. [resolve_guards] untangles the
+   two:
+
+   - σ, an inlining substitution over the leaf's *let-binders* — binders [g] that occur as a
+     guard LHS [Tm_var g] and are not among [de_args] (so parameters matched on a literal,
+     bound by [match_args], are excluded). Each binder's definition is its non-constant
+     guard-RHS if it has one, else its constant one (so a tested predicate [let p = le x h]
+     with a companion [p = true] takes [le x h], not [true]); [Tm_abs] defs are skipped
+     (higher-order locals the backend rejects anyway). Folded in guard order (ANF emits them
+     in dependency order), giving the transitive closure [p2 ↦ S (max x' y')].
+   - the *conditions* that make this leaf conditional: a tested predicate's call ([le x h],
+     when some [g = constant] pins [g]) and a datatype scrutinee's call ([lookup x en], when a
+     guard reads [C(fields) = call]). Pure definitional lets are inlined via σ into the rhs
+     and are not conditions; the [g = constant] tests themselves carry no call.
+
+   Returns (σ, conditions). *)
+let resolve_guards (ctors : (string, unit) Hashtbl.t) (de_args : term list)
+    (guards : term list) : (var * term) list * term list =
+  let arg_vars = List.concat_map Subst.free_vars_term de_args in
+  let is_arg (v : var) = List.exists (fun a -> a.vid = v.vid) arg_vars in
+  let is_const = function Tm_const _ -> true | _ -> false in
+  (* a guard viewed as [Tm_var g = def], g a let-binder (not a [de_args] parameter) *)
+  let as_let_def g =
+    match eq_sides g with
+    | Some (Tm_var v, r) when not (is_arg v) -> Some (v, r)
+    | Some (r, Tm_var v) when not (is_arg v) -> Some (v, r)
+    | _ -> None
+  in
+  (* binders pinned to a constant by a branch test *)
+  let tested =
+    List.filter_map
+      (fun g -> match as_let_def g with Some (v, r) when is_const r -> Some v.vid | _ -> None)
+      guards
+  in
+  (* σ: each let-binder to its definition, transitively closed. Folding in guard order, the
+     first assignment wins — ANF emits a binder's real (non-constant) definition before any
+     [if] branch test of it, so [p = le x h] is taken over the later [p = true]. [Tm_abs]
+     definitions (higher-order locals the backend rejects) are skipped. *)
+  let sigma = ref [] in
+  List.iter
+    (fun g ->
+      match as_let_def g with
+      | Some (v, r)
+        when (not (List.mem_assoc v !sigma))
+             && (match r with Tm_abs _ -> false | _ -> true) ->
+        sigma := !sigma @ [ (v, Subst.subst_term !sigma r) ]
+      | _ -> ())
+    guards;
+  let sigma = !sigma in
+  (* constructor pattern C(x..): a constructor applied to variables only *)
   let is_pattern t =
     match head_spine t [] with
     | Tm_fvar l, args ->
-      Hashtbl.mem ctors l.bname
-      && List.for_all (function Tm_var _ -> true | _ -> false) args
+      Hashtbl.mem ctors l.bname && List.for_all (function Tm_var _ -> true | _ -> false) args
     | _ -> false
   in
-  let is_def t =
-    match t with Tm_const _ | Tm_var _ -> false | _ -> not (is_pattern t)
+  (* conditions: tested-predicate calls + datatype-scrutinee calls, σ-resolved *)
+  let conditions =
+    List.filter_map
+      (fun g ->
+        match eq_sides g with
+        | Some (l, r) ->
+          let pick a b =            (* a is the pattern/binder side, b the def side *)
+            if is_const b then None
+            else
+              match a with
+              | Tm_var v when List.mem v.vid tested -> Some (Subst.subst_term sigma b)
+              | _ when is_pattern a -> Some (Subst.subst_term sigma b)
+              | _ -> None
+          in
+          (match pick l r with Some t -> Some t | None -> pick r l)
+        | None -> None)
+      guards
   in
-  List.concat_map
-    (fun g ->
-      match head_spine g [] with
-      | Tm_fvar l, [ a; b ] when lid_eq l eq_lid ->
-        List.map (Subst.subst_term s) (List.filter is_def [ a; b ])
-      | _ -> [])
-    guards
+  (sigma, conditions)
 
 (* Inside a function body a recursive call is a [Tm_var] bound by the enclosing [let rec],
    whereas a VC refers to the same function as a top-level [Tm_fvar]. Rewrite unfolded
@@ -203,9 +261,13 @@ let unroll (m : modul) (eqs : Axioms.defeq list) (sh : (term * term) list) (t : 
             match match_args e.Axioms.de_binders e.Axioms.de_args args' with
             | None -> None
             | Some s ->
+              (* resolve the ANF let-chain: σ inlines the let-definitions into the result,
+                 leaving [conditions] = the genuine branch/scrutinee calls of this leaf *)
+              let sigma, conditions = resolve_guards ctors e.Axioms.de_args e.Axioms.de_guards in
+              let resolve t = Subst.subst_term s (Subst.subst_term sigma t) in
               Some
-                { rhs = externalize fns (Subst.subst_term s e.Axioms.de_rhs);
-                  guards = List.map (externalize fns) (guard_calls ctors s e.Axioms.de_guards) })
+                { rhs = externalize fns (resolve e.Axioms.de_rhs);
+                  guards = List.map (fun c -> externalize fns (Subst.subst_term s c)) conditions })
         eqs
 
 (* The flat list of terms an unfolding needs: the right-hand side and the guard calls. *)

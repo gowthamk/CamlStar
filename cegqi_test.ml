@@ -135,6 +135,49 @@ val t : x:nat -> v:nat -> en:env -> Lemma(ensures found x (ECons x v en) = true)
 let t x v en = ()
 |}
 
+(* A nested let-chain in max's (S, S) arm: `let p1 = max x' y' in let p2 = S p1 in p2`.
+   The witness `S (max a' b')` is only recovered by resolving the chain p2 -> S p1 ->
+   S (max x' y'); emitting just the sub-call `max a' b'` (the pre-fix behaviour) leaves it
+   stuck. The Z-arm VC needs `S (max a' b')`, which is absent from the goal. *)
+let nested_max = {|
+module NestedMax
+type nat = | Z : nat | S : nat -> nat
+let rec max x y = match x with
+  | Z -> y
+  | S x' -> (match y with
+             | Z -> x
+             | S y' -> let p1 = max x' y' in let p2 = S p1 in p2)
+val tip_22 : a:nat -> b:nat -> c:nat -> Lemma(ensures max (max a b) c = max a (max b c))
+let rec tip_22 a b c = match a with
+  | Z -> ()
+  | S a' -> (match b with
+             | Z -> ()
+             | S b' -> (match c with
+                        | Z -> ()
+                        | S c' -> tip_22 a' b' c'))
+|}
+
+(* [len] written with a let (`let r = len t in S r`) rather than the direct `S (len t)`.
+   It is still *unconditional* and constructor-returning, so after let-chain resolution its
+   result is `S (len t)` with no guards — a derivable shape. Only then does [double (len xs)]
+   unfold. This guards against the second symptom of the let-chain bug (the let-def surfacing
+   as a guard and suppressing shape derivation). *)
+let derived_let = {|
+module DerivedLet
+type nat = | Z : nat | S : nat -> nat
+type natlist = | Nil : natlist | Cons : nat -> natlist -> natlist
+let rec len xs = match xs with
+  | Nil -> Z
+  | Cons h t -> let r = len t in S r
+let rec double x = match x with
+  | Z -> Z
+  | S x' -> S (S (double x'))
+val tip : xs:natlist -> Lemma(ensures double (len xs) = len xs)
+let rec tip xs = match xs with
+  | Nil -> ()
+  | Cons h t -> tip t
+|}
+
 let () =
   print_endline "cegqi_test";
 
@@ -183,6 +226,20 @@ let () =
   let ct = all_candidates through_call in
   check "match on a call's result proposes the scrutinee call"
     (List.mem "lookup x (ECons x v en)" ct) (String.concat " | " ct);
+
+  (* --- Change 1: let-chain resolution --- *)
+  (* nested-let max must yield the full witness S (max a' b'), not just the sub-call max a' b' *)
+  let cn = all_candidates nested_max in
+  check "nested-let max proposes the full witness S (max a' b')"
+    (List.mem "S (max a' b')" cn) (String.concat " | " cn);
+  check "nested-let max resolves the recursive arm's witness S (max b' c') too"
+    (List.mem "S (max b' c')" cn) (String.concat " | " cn);
+  (* let-style unconditional len still derives its shape, so double (len xs) unfolds *)
+  let cdl = all_candidates derived_let in
+  check "let-style len: its result S (len t) is proposed"
+    (List.mem "S (len t)" cdl) (String.concat " | " cdl);
+  check "let-style len: shape still derived, double (len xs) unfolds"
+    (List.mem "S (S (double (len t)))" cdl) (String.concat " | " cdl);
 
   (* --- saturation: nothing to instantiate when the gap is a lemma --- *)
   let c04 = all_candidates prop04 in

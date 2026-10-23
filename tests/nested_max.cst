@@ -1,0 +1,28 @@
+module NestedMax
+
+(* `max` written with a *nested* let-chain in its (S, S) arm: the result is built as
+   `let p1 = max x' y' in let p2 = S p1 in p2`, not the direct `S (max x' y')`. The
+   definitional equation is therefore
+     (p1 = max x' y') /\ (p2 = S p1)  =>  max (S x') (S y') = p2,
+   and the witness the goal needs, `S (max a b)`, is only recovered by resolving the
+   let-chain p2 -> S p1 -> S (max x' y'). CEGQI must produce that full term; emitting only
+   `max a b` (its sub-call) leaves the application stuck and the VC false-`saturated`.
+
+   The lemma below is true and non-recursive. Its two sides both reduce to `S (max a b)`,
+   but that term appears nowhere in the goal — so it must be derived by unrolling
+   `max (S a) (S b)`, not read off the goal. It must verify. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec max x y = match x with
+  | Z -> y
+  | S x' -> (match y with
+             | Z -> x
+             | S y' -> let p1 = max x' y' in
+                       let p2 = S p1 in
+                       p2)
+
+val z_arm : a:nat -> b:nat -> Lemma(ensures max (max (S a) (S b)) Z = max (S a) (max (S b) Z))
+let z_arm a b = ()
