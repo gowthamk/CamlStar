@@ -1,0 +1,25 @@
+module Wildcard
+
+(* Default arms after constructor arms, single and tuple scrutinee. Both lemmas are true
+   and must verify. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let g (a:nat) = match a with
+  | S x -> Z
+  | _ -> S Z
+
+let both_succ (a:nat) (b:nat) = match a, b with
+  | S x, S y -> true
+  | _, _ -> false
+
+val g_zero : u:unit -> Lemma(ensures g Z = S Z)
+let g_zero u = ()
+
+val g_succ : n:nat -> Lemma(ensures g (S n) = Z)
+let g_succ n = ()
+
+val both_succ_zero : b:nat -> Lemma(ensures both_succ Z b = false)
+let both_succ_zero b = ()

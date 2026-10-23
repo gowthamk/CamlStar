@@ -1,0 +1,15 @@
+module WildcardBad
+
+(* A default arm after a constructor arm. The lemma is false: g a is Z or S Z, never
+   S (S Z). It must fail with a counterexample. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let g (a:nat) = match a with
+  | S x -> Z
+  | _ -> S Z
+
+val bad : a:nat -> Lemma(ensures g a = S (S Z))
+let bad a = ()
