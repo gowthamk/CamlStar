@@ -96,6 +96,45 @@ let tip_04 n xs = match xs with
   | Cons x xs' -> tip_04 n xs'
 |}
 
+(* A derived shape. [double (len xs)] matches on its argument; under [xs = Cons h t],
+   [len xs] unfolds to the constructor term [S (len t)]. Only with that result recorded as
+   the shape of [len xs] can [double]'s equation fire. The lemma is false; only candidates
+   are computed here, never the solver. *)
+let derived = {|
+module Derived
+type nat = | Z : nat | S : nat -> nat
+type natlist = | Nil : natlist | Cons : nat -> natlist -> natlist
+let rec len xs = match xs with
+  | Nil -> Z
+  | Cons h t -> S (len t)
+let rec double x = match x with
+  | Z -> Z
+  | S x' -> S (S (double x'))
+val tip : xs:natlist -> Lemma(ensures double (len xs) = len xs)
+let rec tip xs = match xs with
+  | Nil -> ()
+  | Cons h t -> tip t
+|}
+
+(* A match on a call's result. [found] scrutinises [lookup x en]; in the [Found v] arm the
+   equation's guard reads [Found v = lookup x en], and the engine must still propose the
+   call at the arm's instance, [lookup x (ECons x v en)], or the goal saturates with one
+   witness missing. *)
+let through_call = {|
+module ThroughCall
+type nat = | Z : nat | S : nat -> nat
+type look = | Found : nat -> look | Missing : look
+type env = | ENil : env | ECons : nat -> nat -> env -> env
+let rec lookup x en = match en with
+  | ENil -> Missing
+  | ECons y w r -> let p = (x = y) in if p then Found w else lookup x r
+let found x en = let l = lookup x en in match l with
+  | Found w -> true
+  | Missing -> false
+val t : x:nat -> v:nat -> en:env -> Lemma(ensures found x (ECons x v en) = true)
+let t x v en = ()
+|}
+
 let () =
   print_endline "cegqi_test";
 
@@ -127,8 +166,23 @@ let () =
     (List.mem "Cons h2 (insort x t2)" c77) (String.concat " | " c77);
   check "prop77 proposes the guard call le x h"
     (List.exists (fun s -> s = "le x h") c77) (String.concat " | " c77);
-  check "prop77 unfolds the sorted predicate too"
-    (List.mem "sorted (Cons h2 t2)" c77) (String.concat " | " c77);
+  (* [sorted (Cons h2 t2)] is [sorted t] under the arm's [t = Cons h2 t2]: present under
+     its expanded form, so it is not proposed again (the solver relates the two through
+     the hypothesis) *)
+  check "prop77 does not re-propose sorted t under its expanded form"
+    (not (List.mem "sorted (Cons h2 t2)" c77)) (String.concat " | " c77);
+
+  (* --- derived shapes: an unguarded constructor result lets the outer application fire --- *)
+  let cd = all_candidates derived in
+  check "derived shape: len xs = S (len t) is proposed"
+    (List.mem "S (len t)" cd) (String.concat " | " cd);
+  check "derived shape: double (len xs) unfolds through it"
+    (List.mem "S (S (double (len t)))" cd) (String.concat " | " cd);
+
+  (* --- a match on a call's result: the scrutinee call is proposed at the arm's instance --- *)
+  let ct = all_candidates through_call in
+  check "match on a call's result proposes the scrutinee call"
+    (List.mem "lookup x (ECons x v en)" ct) (String.concat " | " ct);
 
   (* --- saturation: nothing to instantiate when the gap is a lemma --- *)
   let c04 = all_candidates prop04 in
