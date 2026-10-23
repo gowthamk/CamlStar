@@ -1,0 +1,59 @@
+module ScrutineeInline
+
+(* A call as an `if` guard, as a `match` scrutinee, and in a tuple-match column, written
+   inline as in F*. The parser binds each to a variable, so the equation generator sees
+   the same program as the hand-written `let p = … in if p` form. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type look =
+  | Found : nat -> look
+  | Missing : look
+
+type env =
+  | ENil : env
+  | ECons : nat -> nat -> env -> env
+
+let rec le (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S a -> (match y with
+            | Z -> false
+            | S b -> le a b)
+
+let rec eq_nat (x:nat) (y:nat) = match x with
+  | Z -> (match y with
+          | Z -> true
+          | S b -> false)
+  | S a -> (match y with
+            | Z -> false
+            | S b -> eq_nat a b)
+
+let rec lookup (x:nat) (en:env) = match en with
+  | ENil -> Missing
+  | ECons y v rest -> if eq_nat x y then Found v else lookup x rest
+
+let min (x:nat) (y:nat) = if le x y then x else y
+
+let found (x:nat) (en:env) = match lookup x en with
+  | Found v -> true
+  | Missing -> false
+
+let both_found (x:nat) (y:nat) (en:env) = match lookup x en, lookup y en with
+  | Found v, Found w -> true
+  | Found v, Missing -> false
+  | Missing, Found w -> false
+  | Missing, Missing -> false
+
+val min_zero : y:nat -> Lemma(ensures min Z y = Z)
+let min_zero y = ()
+
+val found_nil : x:nat -> Lemma(ensures found x ENil = false)
+let found_nil x = ()
+
+val both_found_nil : x:nat -> y:nat -> Lemma(ensures both_found x y ENil = false)
+let both_found_nil x y = ()
+
+val lookup_head : x:nat -> v:nat -> en:env -> Lemma(ensures eq_nat x x ==> lookup x (ECons x v en) = Found v)
+let lookup_head x v en = ()
