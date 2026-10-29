@@ -1,0 +1,422 @@
+module Compiler
+
+(* The CSCI 3155 Project 1 stack-machine compiler, transcribed from
+   new_ravencheck/test_suite/Compiler/compiler_spec.rs (and Fstar_playground/CompilerSpec.fst).
+   Everything above `compile_correct` is the specification and is not to be changed; the
+   theorem at the end is the proof obligation.
+
+   Caml* conventions used throughout: a match scrutinee is a variable (a computed value is
+   let-bound first), an `if` guard is let-bound (`let p = … in if p then …`), and a pair
+   of values is matched with `match a, b with`. *)
+
+(* ---- 1. Nat ---- *)
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+(* ---- 2. Numbers: Peano naturals with the operations defined inductively.
+   `sub` is truncated subtraction; `div` is floor division by repeated subtraction
+   (a division by zero is caught before it, so `div_pos` is only called with a
+   non-zero divisor). ---- *)
+let rec add (x:nat) (y:nat) = match x with
+  | Z -> y
+  | S x1 -> S (add x1 y)
+
+let rec mul (x:nat) (y:nat) = match x with
+  | Z -> Z
+  | S x1 -> add y (mul x1 y)
+
+let rec sub (x:nat) (y:nat) = match y with
+  | Z -> x
+  | S y1 -> (match x with
+             | Z -> Z
+             | S x1 -> sub x1 y1)
+
+let rec leq (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S x1 -> (match y with
+             | Z -> false
+             | S y1 -> leq x1 y1)
+
+let rec lt (x:nat) (y:nat) = match y with
+  | Z -> false
+  | S y1 -> (match x with
+             | Z -> true
+             | S x1 -> lt x1 y1)
+
+let geq (x:nat) (y:nat) = leq y x
+
+let gt (x:nat) (y:nat) = lt y x
+
+let is_zero (x:nat) = match x with
+  | Z -> true
+  | S x1 -> false
+
+(* floor division for a non-zero divisor: count how many times y fits *)
+let rec div_pos (x:nat) (y:nat) =
+  let p = lt x y in
+  if p then Z else S (div_pos (sub x y) y)
+
+let div (x:nat) (y:nat) =
+  let z = is_zero y in
+  if z then Z else div_pos x y
+
+(* ---- 3. Identifiers are strings. ---- *)
+
+(* ---- 4. Values ---- *)
+type value =
+  | Num : nat -> value
+  | Bool : bool -> value
+
+(* ---- 5. The source language ---- *)
+type expr =
+  | Const : nat -> expr
+  | Id : string -> expr
+  | Add : expr -> expr -> expr
+  | Sub : expr -> expr -> expr
+  | Mul : expr -> expr -> expr
+  | Div : expr -> expr -> expr
+  | Geq : expr -> expr -> expr
+  | Gt : expr -> expr -> expr
+  | Eq : expr -> expr -> expr
+  | And : expr -> expr -> expr
+  | Or : expr -> expr -> expr
+  | Not : expr -> expr
+  | IfThenElse : expr -> expr -> expr -> expr
+  | Let : string -> expr -> expr -> expr
+
+(* ---- 6. The stack machine ---- *)
+type instr =
+  | IPush : nat -> instr
+  | IPushBool : bool -> instr
+  | IPlus : instr
+  | ISub : instr
+  | IMul : instr
+  | IDiv : instr
+  | IGeq : instr
+  | IGt : instr
+  | IEq : instr
+  | INot : instr
+  | IStore : string -> instr
+  | ILoad : string -> instr
+  | IPop : instr
+  | ICondSkip : nat -> instr
+  | ISkip : nat -> instr
+
+(* instruction list *)
+type ilist =
+  | INil : ilist
+  | ICons : instr -> ilist -> ilist
+
+(* operand stack *)
+type vlist =
+  | VNil : vlist
+  | VCons : value -> vlist -> vlist
+
+(* environment stack: (identifier, value) pairs *)
+type env =
+  | ENil : env
+  | ECons : string -> value -> env -> env
+
+(* result of lookup *)
+type look =
+  | Found : value -> look
+  | Missing : look
+
+(* machine result: the two stacks, or an exception *)
+type res =
+  | Done : vlist -> env -> res
+  | Fail : res
+
+(* source result: a value, or an exception *)
+type evres =
+  | Ok : value -> evres
+  | Err : evres
+
+(* ---- 7. List helpers ---- *)
+let rec app (xs:ilist) (ys:ilist) = match xs with
+  | INil -> ys
+  | ICons i t -> ICons i (app t ys)
+
+let rec length (xs:ilist) = match xs with
+  | INil -> Z
+  | ICons i t -> S (length t)
+
+(* drop the first n instructions (all of them if fewer) *)
+let rec drop (n:nat) (xs:ilist) = match n with
+  | Z -> xs
+  | S m -> (match xs with
+            | INil -> INil
+            | ICons i t -> drop m t)
+
+(* ILoad: scan the environment from the top for the first binding of x *)
+let rec lookup (x:string) (en:env) = match en with
+  | ENil -> Missing
+  | ECons y v rest ->
+    let p = (x = y) in
+    if p then Found v else lookup x rest
+
+(* ---- 8. The emulator ----
+   exec instructions operand-stack environment-stack. ISub/IDiv/IGeq/IGt use the
+   notebook's order: v1 is the top of the stack, v2 below it, and the result is v2 op v1. *)
+let rec exec (is:ilist) (ops:vlist) (en:env) = match is with
+  | INil -> Done ops en
+  | ICons i rest ->
+    (match i with
+     | IPush d -> exec rest (VCons (Num d) ops) en
+     | IPushBool b -> exec rest (VCons (Bool b) ops) en
+     | IPlus ->
+       (match ops with
+        | VCons v1 t1 ->
+          (match t1 with
+           | VCons v2 t2 ->
+             (match v1, v2 with
+              | Num a, Num b -> exec rest (VCons (Num (add b a)) t2) en
+              | _, _ -> Fail)
+           | VNil -> Fail)
+        | VNil -> Fail)
+     | ISub ->
+       (match ops with
+        | VCons v1 t1 ->
+          (match t1 with
+           | VCons v2 t2 ->
+             (match v1, v2 with
+              | Num a, Num b -> exec rest (VCons (Num (sub b a)) t2) en
+              | _, _ -> Fail)
+           | VNil -> Fail)
+        | VNil -> Fail)
+     | IMul ->
+       (match ops with
+        | VCons v1 t1 ->
+          (match t1 with
+           | VCons v2 t2 ->
+             (match v1, v2 with
+              | Num a, Num b -> exec rest (VCons (Num (mul b a)) t2) en
+              | _, _ -> Fail)
+           | VNil -> Fail)
+        | VNil -> Fail)
+     | IDiv ->
+       (match ops with
+        | VCons v1 t1 ->
+          (match t1 with
+           | VCons v2 t2 ->
+             (match v1, v2 with
+              | Num a, Num b ->
+                let z = is_zero a in
+                if z then Fail else exec rest (VCons (Num (div b a)) t2) en
+              | _, _ -> Fail)
+           | VNil -> Fail)
+        | VNil -> Fail)
+     | IGeq ->
+       (match ops with
+        | VCons v1 t1 ->
+          (match t1 with
+           | VCons v2 t2 ->
+             (match v1, v2 with
+              | Num a, Num b -> exec rest (VCons (Bool (geq b a)) t2) en
+              | _, _ -> Fail)
+           | VNil -> Fail)
+        | VNil -> Fail)
+     | IGt ->
+       (match ops with
+        | VCons v1 t1 ->
+          (match t1 with
+           | VCons v2 t2 ->
+             (match v1, v2 with
+              | Num a, Num b -> exec rest (VCons (Bool (gt b a)) t2) en
+              | _, _ -> Fail)
+           | VNil -> Fail)
+        | VNil -> Fail)
+     (* IEq compares any two values *)
+     | IEq ->
+       (match ops with
+        | VCons v1 t1 ->
+          (match t1 with
+           | VCons v2 t2 ->
+             let p = (v1 = v2) in
+             if p then exec rest (VCons (Bool true) t2) en
+             else exec rest (VCons (Bool false) t2) en
+           | VNil -> Fail)
+        | VNil -> Fail)
+     | INot ->
+       (match ops with
+        | VCons v1 t ->
+          (match v1 with
+           | Bool b -> if b then exec rest (VCons (Bool false) t) en
+                       else exec rest (VCons (Bool true) t) en
+           | Num n -> Fail)
+        | VNil -> Fail)
+     | IStore x ->
+       (match ops with
+        | VCons v t -> exec rest t (ECons x v en)
+        | VNil -> Fail)
+     | ILoad x ->
+       let l = lookup x en in
+       (match l with
+        | Found v -> exec rest (VCons v ops) en
+        | Missing -> Fail)
+     | IPop ->
+       (match en with
+        | ECons y w rest_env -> exec rest ops rest_env
+        | ENil -> Fail)
+     (* pop a boolean; on false skip the next n instructions *)
+     | ICondSkip n ->
+       (match ops with
+        | VCons v1 t ->
+          (match v1 with
+           | Bool b -> if b then exec rest t en else exec (drop n rest) t en
+           | Num m -> Fail)
+        | VNil -> Fail)
+     | ISkip n -> exec (drop n rest) ops en)
+
+(* ---- 9. Source semantics ---- *)
+let rec eval (ex:expr) (en:env) = match ex with
+  | Const d -> Ok (Num d)
+  | Id x ->
+    let l = lookup x en in
+    (match l with
+     | Found v -> Ok v
+     | Missing -> Err)
+  | Add e1 e2 ->
+    let r1 = eval e1 en in
+    let r2 = eval e2 en in
+    (match r1, r2 with
+     | Ok v1, Ok v2 ->
+       (match v1, v2 with
+        | Num a, Num b -> Ok (Num (add a b))
+        | _, _ -> Err)
+     | _, _ -> Err)
+  | Sub e1 e2 ->
+    let r1 = eval e1 en in
+    let r2 = eval e2 en in
+    (match r1, r2 with
+     | Ok v1, Ok v2 ->
+       (match v1, v2 with
+        | Num a, Num b -> Ok (Num (sub a b))
+        | _, _ -> Err)
+     | _, _ -> Err)
+  | Mul e1 e2 ->
+    let r1 = eval e1 en in
+    let r2 = eval e2 en in
+    (match r1, r2 with
+     | Ok v1, Ok v2 ->
+       (match v1, v2 with
+        | Num a, Num b -> Ok (Num (mul a b))
+        | _, _ -> Err)
+     | _, _ -> Err)
+  | Div e1 e2 ->
+    let r1 = eval e1 en in
+    let r2 = eval e2 en in
+    (match r1, r2 with
+     | Ok v1, Ok v2 ->
+       (match v1, v2 with
+        | Num a, Num b ->
+          let z = is_zero b in
+          if z then Err else Ok (Num (div a b))
+        | _, _ -> Err)
+     | _, _ -> Err)
+  | Geq e1 e2 ->
+    let r1 = eval e1 en in
+    let r2 = eval e2 en in
+    (match r1, r2 with
+     | Ok v1, Ok v2 ->
+       (match v1, v2 with
+        | Num a, Num b -> Ok (Bool (geq a b))
+        | _, _ -> Err)
+     | _, _ -> Err)
+  | Gt e1 e2 ->
+    let r1 = eval e1 en in
+    let r2 = eval e2 en in
+    (match r1, r2 with
+     | Ok v1, Ok v2 ->
+       (match v1, v2 with
+        | Num a, Num b -> Ok (Bool (gt a b))
+        | _, _ -> Err)
+     | _, _ -> Err)
+  | Eq e1 e2 ->
+    let r1 = eval e1 en in
+    let r2 = eval e2 en in
+    (match r1, r2 with
+     | Ok v1, Ok v2 ->
+       let p = (v1 = v2) in
+       if p then Ok (Bool true) else Ok (Bool false)
+     | _, _ -> Err)
+  (* short circuit: `if e1 then e2 else false` *)
+  | And e1 e2 ->
+    let r1 = eval e1 en in
+    (match r1 with
+     | Ok v1 ->
+       (match v1 with
+        | Bool b -> if b then eval e2 en else Ok (Bool false)
+        | Num n -> Err)
+     | Err -> Err)
+  (* short circuit: `if e1 then true else e2` *)
+  | Or e1 e2 ->
+    let r1 = eval e1 en in
+    (match r1 with
+     | Ok v1 ->
+       (match v1 with
+        | Bool b -> if b then Ok (Bool true) else eval e2 en
+        | Num n -> Err)
+     | Err -> Err)
+  | Not e1 ->
+    let r1 = eval e1 en in
+    (match r1 with
+     | Ok v1 ->
+       (match v1 with
+        | Bool b -> if b then Ok (Bool false) else Ok (Bool true)
+        | Num n -> Err)
+     | Err -> Err)
+  | IfThenElse c t f ->
+    let r1 = eval c en in
+    (match r1 with
+     | Ok v1 ->
+       (match v1 with
+        | Bool b -> if b then eval t en else eval f en
+        | Num n -> Err)
+     | Err -> Err)
+  | Let x e1 e2 ->
+    let r1 = eval e1 en in
+    (match r1 with
+     | Ok v1 -> eval e2 (ECons x v1 en)
+     | Err -> Err)
+
+(* ---- 10. Compiler (based on the notebook's rules) ---- *)
+let rec compile (ex:expr) = match ex with
+  | Const d -> ICons (IPush d) INil
+  | Id x -> ICons (ILoad x) INil
+  | Add e1 e2 -> app (compile e1) (app (compile e2) (ICons IPlus INil))
+  | Sub e1 e2 -> app (compile e1) (app (compile e2) (ICons ISub INil))
+  | Mul e1 e2 -> app (compile e1) (app (compile e2) (ICons IMul INil))
+  | Div e1 e2 -> app (compile e1) (app (compile e2) (ICons IDiv INil))
+  | Geq e1 e2 -> app (compile e1) (app (compile e2) (ICons IGeq INil))
+  | Gt e1 e2 -> app (compile e1) (app (compile e2) (ICons IGt INil))
+  | Eq e1 e2 -> app (compile e1) (app (compile e2) (ICons IEq INil))
+  | Not e1 -> app (compile e1) (ICons INot INil)
+  (* L0 ; ICondSkip(len L1 + 1) ; L1 ; ISkip(len L2) ; L2 *)
+  | IfThenElse c t f ->
+    let l1 = compile t in
+    let l2 = compile f in
+    app (compile c) (ICons (ICondSkip (S (length l1))) (app l1 (ICons (ISkip (length l2)) l2)))
+  (* And e1 e2 = IfThenElse e1 e2 false:
+       L1 ; ICondSkip(len L2 + 1) ; L2 ; ISkip 1 ; IPushBool false *)
+  | And e1 e2 ->
+    let l2 = compile e2 in
+    app (compile e1)
+        (ICons (ICondSkip (S (length l2))) (app l2 (ICons (ISkip (S Z)) (ICons (IPushBool false) INil))))
+  (* Or e1 e2 = IfThenElse e1 true e2:
+       L1 ; ICondSkip 2 ; IPushBool true ; ISkip(len L2) ; L2 *)
+  | Or e1 e2 ->
+    let l2 = compile e2 in
+    app (compile e1)
+        (ICons (ICondSkip (S (S Z))) (ICons (IPushBool true) (ICons (ISkip (length l2)) l2)))
+  (* L1 ; IStore x ; L2 ; IPop *)
+  | Let x e1 e2 ->
+    app (compile e1) (ICons (IStore x) (app (compile e2) (ICons IPop INil)))
+
+(* ---- 11. Goal theorem ----
+   If ex evaluates to v in en, then running compile ex followed by any continuation
+   `rest`, from any operand stack, is the same as running `rest` with v pushed. *)
+val compile_correct : ex:expr -> en:env -> v:value -> rest:ilist -> ops:vlist ->
+  Lemma(ensures eval ex en = Ok v ==> exec (app (compile ex) rest) ops en = exec rest (VCons v ops) en)
+let compile_correct ex en v rest ops = ()
