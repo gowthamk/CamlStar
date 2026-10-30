@@ -5,10 +5,6 @@ module Compiler
    Everything above `compile_correct` is the specification and is not to be changed; the
    theorem at the end is the proof obligation.
 
-   Caml* conventions used throughout: a match scrutinee is a variable (a computed value is
-   let-bound first), an `if` guard is let-bound (`let p = … in if p then …`), and a pair
-   of values is matched with `match a, b with`. *)
-
 (* ---- 1. Nat ---- *)
 type nat =
   | Z : nat
