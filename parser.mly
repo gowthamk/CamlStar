@@ -407,6 +407,9 @@ binder:
       { fun sc -> let v = fresh_var x in (v, Some (t sc), bind_tm sc x v) }
   | x=IDENT
       { fun sc -> let v = fresh_var x in (v, None, bind_tm sc x v) }
+  | LPAREN RPAREN
+      { (* F*'s unit parameter, `let l () = …` for `val l : unit -> Lemma(…)` *)
+        fun sc -> (fresh_var "_", Some t_unit, sc) }
 
 letbinding:
   | name=IDENT params=list(binder) ty=letAnnot EQUALS e=term
