@@ -186,6 +186,33 @@ let function_sigs (m : modul) : (string * (base_typ list * base_typ)) list =
          | _ -> acc)
        [] m.mod_decls)
 
+(* Arity-0 symbols: an `assume val c : t` or a `let c : t = …` with no parameters. The
+   checker types them like any symbol, but they are no function (no [f_rel]) and no
+   constructor, so without this they would reach the query undeclared. Each becomes a
+   declared constant; a defined one also gets its equation (definitional_equations). *)
+let constant_sigs (m : modul) : (string * base_typ) list =
+  let seen : (string, unit) Hashtbl.t = Hashtbl.create 16 in
+  let add acc name (ty : typ) =
+    match ty with
+    | T_refine { rbase; _ } ->
+      if Hashtbl.mem seen name then acc
+      else (Hashtbl.add seen name (); (name, rbase) :: acc)
+    | T_arrow _ -> acc
+  in
+  List.rev
+    (List.fold_left
+       (fun acc se ->
+         match se.sig_el with
+         | Sig_val (l, sch) -> add acc l.bname sch.ts_typ
+         | Sig_let lbs ->
+           List.fold_left
+             (fun acc lb -> match lb.lb_scheme with
+                | Some sch -> add acc lb.lb_name.vname sch.ts_typ
+                | None -> acc)
+             acc lbs.lbs
+         | _ -> acc)
+       [] m.mod_decls)
+
 (* source names of functions that already return bool: these are encoded as SMT
    *predicates* [f : args -> Bool] under their own name, not relationally abstracted
    into [f_rel(args, result)] (a bool result column would be redundant — the function
@@ -207,6 +234,10 @@ let function_decls (m : modul) : string list =
           (Smtlib.sanitize (rel_name name))
           (String.concat " " (List.map Smtlib.sort_of_base (ins @ [ out ]))))
     (function_sigs m)
+  @ List.map
+      (fun (name, sort) ->
+        Printf.sprintf "(declare-const %s %s)" (Smtlib.sanitize name) (Smtlib.sort_of_base sort))
+      (constant_sigs m)
 
 (* Functionality is only needed for the *relations* (an SMT predicate is already a
    function of its arguments), so bool functions are skipped here. *)
@@ -384,8 +415,9 @@ let definitional_equations (m : modul) : defeq list =
               | None -> (match lb.lb_scheme with Some s -> s.ts_typ | None -> mk_base B_unit)
             in
             match declared with
-            | T_arrow _
+            | T_arrow _ | T_refine _
               when fun_result declared <> B_unit && not (has_refinement declared) ->
+              (* a T_refine here is an arity-0 definition: no parameters, one equation *)
               let dom_bases = fun_doms declared in
               let vars, inner = peel_lams (List.length dom_bases) lb.lb_def in
               (try gen_equations name (List.combine vars dom_bases) field_sorts ctors_of inner
