@@ -27,3 +27,8 @@ val specialize_module : typed:Ast.modul -> Ast.modul -> Ast.modul
    with [Subst.alpha_equal_term]. Types inside [t] (binder annotations, ascriptions)
    are left as they are. *)
 val beta : Ast.term -> Ast.term
+
+(* [inline_local_lambdas t]: every `let h = fun x -> e in b` in [t] (non-recursive, one
+   binding) replaced by [b] with the lambda substituted for [h], each copy with fresh
+   binders. Leaves the applications it creates, `(fun x -> e) a`, to [beta]. *)
+val inline_local_lambdas : Ast.term -> Ast.term
