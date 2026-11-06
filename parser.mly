@@ -16,6 +16,14 @@ type scope = {
 }
 let empty_scope () = { tm = []; ty = Hashtbl.create 8; tord = ref [] }
 let bind_tm sc name v = { sc with tm = (name, v) :: sc.tm }
+
+(* Records. `type R = { f1 : t1; …; fn : tn }` is the datatype a user would write by
+   hand — one constructor `MkR : t1 -> … -> tn -> R` (F*'s name) — plus one projection
+   per field, `let fi (s:R) = match s with | MkR _ … xi … _ -> xi`, so the checker, the
+   axioms and the countermodel see an ordinary datatype and ordinary functions. The
+   table records each field's record, position and the record's arity for the term and
+   pattern sugar. *)
+let record_fields : (string, string * int * int) Hashtbl.t = Hashtbl.create 16
 let resolve_tm sc name =
   match List.assoc_opt name sc.tm with
   | Some v -> Tm_var v
@@ -194,6 +202,113 @@ let build_lets is_rec (lbs : lb_syntax list) outer =
       named
   in
   ({ lb_rec = is_rec; lbs = lbs' }, body_scope)
+
+(* the record declaration (see record_fields): the datatype, then one projection per field *)
+let record_decl (name : string) (fs : (string * typ) list) (sc : scope)
+    : (sigelt' * qualifier list) list =
+  let rname = lid_of_str name in
+  let rtyp = mk_base (B_app (rname, [])) in
+  let mk = lid_of_str ("Mk" ^ name) in
+  let n = List.length fs in
+  let ctyp = List.fold_right (fun (_, t) cod -> mk_arrow (fresh_var "_") t cod) fs rtyp in
+  let ind =
+    Sig_inductive
+      { ind_name = rname; ind_params = [];
+        ind_ctors = [ { dc_name = mk; dc_typ = { ts_vars = []; ts_typ = ctyp } } ] }
+  in
+  List.iteri (fun i (f, _) -> Hashtbl.replace record_fields f (name, i, n)) fs;
+  let proj i (f, _) =
+    let sv = fresh_var "s" in
+    let xi = fresh_var f in
+    let pats = List.init n (fun j -> if j = i then P_var xi else P_wild (fresh_var "_")) in
+    let body =
+      Tm_abs { xbinder = sv; xtyp = Some rtyp;
+               xbody = Tm_match (Tm_var sv,
+                                 [ { br_pat = P_cons (mk, pats); br_when = None;
+                                     br_body = Tm_var xi } ]) }
+    in
+    let lbs, _ = build_lets false [ { s_name = f; s_typ = None; s_def = (fun _ -> body) } ] sc in
+    (Sig_let lbs, [])
+  in
+  (ind, []) :: List.mapi proj fs
+
+let lookup_field (f : string) : string * int * int =
+  match Hashtbl.find_opt record_fields f with
+  | Some r -> r
+  | None -> failwith (Printf.sprintf "%s is not a record field" f)
+
+(* the given fields placed by declared position: (record, arity, slot array), every
+   field of one record, none twice *)
+let field_slots (what : string) (fs : (string * 'a) list) : string * int * 'a option array =
+  match fs with
+  | [] -> failwith (Printf.sprintf "empty %s" what)
+  | (f0, _) :: _ ->
+    let rname, _, n = lookup_field f0 in
+    let slots = Array.make n None in
+    List.iter
+      (fun (f, e) ->
+        let r, i, _ = lookup_field f in
+        if r <> rname then
+          failwith (Printf.sprintf "%s is a field of %s, not of %s" f r rname);
+        if slots.(i) <> None then failwith (Printf.sprintf "field %s given twice" f);
+        slots.(i) <- Some e)
+      fs;
+    (rname, n, slots)
+
+(* `{ f1 = e1; …; fn = en }` → `MkR e1 … en`: every field required, any order *)
+let record_literal (fs : (string * term) list) : term =
+  let rname, _, slots = field_slots "record literal" fs in
+  let args =
+    Array.to_list
+      (Array.mapi
+         (fun i s ->
+           match s with
+           | Some e -> e
+           | None ->
+             let missing =
+               Hashtbl.fold (fun f (r, j, _) acc -> if r = rname && j = i then f else acc)
+                 record_fields "?" in
+             failwith (Printf.sprintf "record literal of %s is missing field %s" rname missing))
+         slots)
+  in
+  mk_app (Tm_fvar (lid_of_str ("Mk" ^ rname))) args
+
+(* `{ e with f = v; … }` → `MkR (f1 e) … v … (fn e)`: the updated fields' values, the
+   others read back through their projections. A value, so it is allowed wherever a
+   term is — in a function body and inside `ensures` alike (a `match` form would be a
+   match in value position, which the formula pipeline rejects) — and a proof about
+   it needs no case split on the record. A non-variable `e` is let-bound first. *)
+let field_at (rname : string) (i : int) : string =
+  Hashtbl.fold (fun f (r, j, _) acc -> if r = rname && j = i then f else acc) record_fields "?"
+
+let record_update (e : term) (fs : (string * term) list) : term =
+  let rname, n, slots = field_slots "record update" fs in
+  bind_scrut e (fun e ->
+      mk_app (Tm_fvar (lid_of_str ("Mk" ^ rname)))
+        (List.init n (fun i ->
+             match slots.(i) with
+             | Some v -> v
+             | None -> mk_app (Tm_fvar (lid_of_str (field_at rname i))) [ e ])))
+
+(* `{ f1 = p1; f2; … }` → `MkR p1 _ p2 _ …`: a named sub-pattern, a punned field (`f2`
+   binds the variable `f2`), and a wildcard for every field not mentioned; the scope is
+   threaded through the sub-patterns in declared order *)
+let record_pattern (fs : (string * (scope -> pat * scope) option) list) (sc : scope)
+    : pat * scope =
+  let rname, n, slots = field_slots "record pattern" fs in
+  let sc', rpats =
+    List.fold_left
+      (fun (s, acc) i ->
+        match slots.(i) with
+        | Some (Some pf) -> let p, s' = pf s in (s', p :: acc)
+        | Some None ->
+          let f = field_at rname i in
+          let v = fresh_var f in
+          (bind_tm s f v, P_var v :: acc)
+        | None -> (s, P_wild (fresh_var "_") :: acc))
+      (sc, []) (List.init n Fun.id)
+  in
+  (P_cons (lid_of_str ("Mk" ^ rname), List.rev rpats), sc')
 %}
 
 /* ===== Tokens ===== */
@@ -227,7 +342,7 @@ let build_lets is_rec (lbs : lb_syntax list) outer =
 /* ===== Module / declarations ===== */
 modul:
   | MODULE n=quident ds=list(decl) EOF
-      { { mod_name = n; mod_decls = ds; mod_is_iface = false } }
+      { { mod_name = n; mod_decls = List.concat ds; mod_is_iface = false } }
 
 quident:
   | parts=separated_nonempty_list(DOT, UIDENT)
@@ -235,19 +350,55 @@ quident:
         | last :: rev_ns -> lid_of_path (List.rev rev_ns) last
         | [] -> assert false }
 
+/* decl : sigelt list — a surface declaration may stand for several signature elements
+   (a record type is its datatype plus one projection per field); they share the
+   qualifiers, attributes and range, and an expect_failure attribute wraps them all. */
 decl:
-  | attrs=list(attribute) quals=list(qualifier) d=rawDecl
+  | attrs=list(attribute) quals=list(qualifier) d=rawDecls
       { let sc = empty_scope () in
-        let (sigel, xq) = d sc in
         let rng = mk_range $startpos(d) $endpos(d) in
-        let base = { sig_el = sigel; sig_quals = quals @ xq;
-                     sig_attrs = []; sig_rng = rng } in
+        let bases =
+          List.map
+            (fun (sigel, xq) ->
+              { sig_el = sigel; sig_quals = quals @ xq; sig_attrs = []; sig_rng = rng })
+            (d sc)
+        in
         if List.exists (function A_expect_failure _ -> true | _ -> false) attrs then
           let codes =
             List.concat_map (function A_expect_failure c -> c | _ -> []) attrs in
-          { sig_el = Sig_fail ([base], codes); sig_quals = [];
-            sig_attrs = []; sig_rng = rng }
-        else base }
+          [ { sig_el = Sig_fail (bases, codes); sig_quals = [];
+              sig_attrs = []; sig_rng = rng } ]
+        else bases }
+
+/* rawDecls : scope -> (sigelt' * extra qualifiers) list; a record type yields its
+   datatype plus one projection per field, every other form yields one */
+rawDecls:
+  | d=rawDecl { fun sc -> [ d sc ] }
+  /* both type forms share the prefix, so the body's first token decides */
+  | TYPE name=IDENT ps=list(TYVAR) EQUALS cs=nonempty_list(constructor)
+      { fun sc ->
+          let params = List.map (get_tyvar sc) ps in
+          let ctors =
+            List.map (fun (nm, t) ->
+              let tt = t sc in
+              { dc_name = lid_of_str nm; dc_typ = { ts_vars = params; ts_typ = tt } })
+              cs
+          in
+          [ (Sig_inductive { ind_name = lid_of_str name; ind_params = params;
+                             ind_ctors = ctors }, []) ] }
+  | TYPE name=IDENT ps=list(TYVAR) EQUALS LBRACE fs=recordFields RBRACE
+      { fun sc ->
+          if ps <> [] then failwith "record types take no type parameters";
+          record_decl name (List.map (fun (f, t) -> (f, t sc)) fs) sc }
+
+/* `;`-separated, a trailing `;` allowed: after a `;` the next token decides */
+recordFields:
+  | f=recordField                            { [ f ] }
+  | f=recordField SEMICOLON                  { [ f ] }
+  | f=recordField SEMICOLON fs=recordFields  { f :: fs }
+
+recordField:
+  | f=IDENT COLON t=typ { (f, t) }
 
 qualifier:
   | PRIVATE      { Q_private }
@@ -277,17 +428,6 @@ rawDecl:
       { fun sc -> (Sig_assume (name, phi sc), []) }
   | LET r=recflag lbs=separated_nonempty_list(AND, letbinding)
       { fun sc -> let (lbs', _) = build_lets r lbs sc in (Sig_let lbs', []) }
-  | TYPE name=IDENT ps=list(TYVAR) EQUALS cs=nonempty_list(constructor)
-      { fun sc ->
-          let params = List.map (get_tyvar sc) ps in
-          let ctors =
-            List.map (fun (nm, t) ->
-              let tt = t sc in
-              { dc_name = lid_of_str nm; dc_typ = { ts_vars = params; ts_typ = tt } })
-              cs
-          in
-          (Sig_inductive { ind_name = lid_of_str name; ind_params = params;
-                           ind_ctors = ctors }, []) }
   | p=pragma
       { fun _ -> (Sig_pragma p, []) }
 
@@ -381,6 +521,12 @@ atomicTyp:
 term:
   | FUN bs=nonempty_list(binder) ARROW e=term
       { fun sc -> build_abs bs e sc }
+  /* `let { f; g = p } = e in body` is a one-arm match on the record */
+  | LET LBRACE fs=recordPatFields RBRACE EQUALS e=term IN body=term
+      { fun sc ->
+          bind_scrut (e sc) (fun e ->
+              let pat, sc' = record_pattern fs sc in
+              Tm_match (e, [ { br_pat = pat; br_when = None; br_body = body sc' } ])) }
   | LET r=recflag lbs=separated_nonempty_list(AND, letbinding) IN body=term
       { fun sc -> let (lbs', bsc) = build_lets r lbs sc in Tm_let (lbs', body bsc) }
   | IF c=term THEN a=term ELSE b=term
@@ -506,6 +652,25 @@ atomicTerm:
   | LPAREN RPAREN               { fun _ -> Tm_const C_unit }
   | LPAREN e=term RPAREN        { e }
   | LPAREN e=term SUBTYPE t=typ RPAREN { fun sc -> Tm_ascribed (e sc, t sc) }
+  /* field access `e.f` → the projection `f e`; postfix, so `g s.f` is `g (f s)` and
+     `s.origin.px` chains */
+  | e=atomicTerm DOT f=IDENT
+      { fun sc -> ignore (lookup_field f); mk_app (Tm_fvar (lid_of_str f)) [ e sc ] }
+  | LBRACE fs=recordLitFields RBRACE
+      { fun sc -> record_literal (List.map (fun (f, e) -> (f, e sc)) fs) }
+  /* the subject is an application, not a full term: `{ s = x with … }` would be
+     ambiguous with a literal's `s = x` */
+  | LBRACE e=appTerm WITH fs=recordLitFields RBRACE
+      { fun sc -> record_update (e sc) (List.map (fun (f, v) -> (f, v sc)) fs) }
+
+/* `f = e` fields, `;`-separated, a trailing `;` allowed */
+recordLitFields:
+  | f=recordLitField                               { [ f ] }
+  | f=recordLitField SEMICOLON                     { [ f ] }
+  | f=recordLitField SEMICOLON fs=recordLitFields  { f :: fs }
+
+recordLitField:
+  | f=IDENT EQUALS e=term { (f, e) }
 
 /* ===== Patterns : scope -> (pat * scope) ===== */
 pattern:
@@ -529,3 +694,14 @@ atomicPat:
                   else let v = fresh_var id in (P_var v, bind_tm sc id v) }
   | uid=UIDENT { fun sc -> (P_cons (lid_of_str uid, []), sc) }
   | LPAREN p=pattern RPAREN { p }
+  | LBRACE fs=recordPatFields RBRACE { fun sc -> record_pattern fs sc }
+
+/* `f = p` or a punned `f`, `;`-separated, a trailing `;` allowed */
+recordPatFields:
+  | f=recordPatField                               { [ f ] }
+  | f=recordPatField SEMICOLON                     { [ f ] }
+  | f=recordPatField SEMICOLON fs=recordPatFields  { f :: fs }
+
+recordPatField:
+  | f=IDENT EQUALS p=pattern { (f, Some p) }
+  | f=IDENT                  { (f, None) }
