@@ -26,6 +26,11 @@
  (libraries camlstar))
 
 (executable
+ (name specialize_test)
+ (modules specialize_test)
+ (libraries camlstar))
+
+(executable
  (name main)
  (modules main)
  (libraries camlstar))

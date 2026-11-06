@@ -17,3 +17,13 @@
    Currently the identity (plan step H2). *)
 
 val specialize_module : typed:Ast.modul -> Ast.modul -> Ast.modul
+
+(* ===== helpers, exposed for specialize_test.ml ===== *)
+
+(* [beta t]: β-normal form of [t]. Contracts every `(fun x -> e) a` in [t], under
+   binders, in `let`s, match arms and guards, and quantifier bodies included, until none
+   is left (a contraction that creates a new redex is followed). Capture-avoiding
+   (by [Subst.subst_term]), so bound variables come back renamed; compare results
+   with [Subst.alpha_equal_term]. Types inside [t] (binder annotations, ascriptions)
+   are left as they are. *)
+val beta : Ast.term -> Ast.term
