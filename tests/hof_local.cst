@@ -1,0 +1,45 @@
+module HofLocal
+
+(* Regression test for higher-order specialization of a local function passed as an
+   argument, the shape of F*'s `let is_my_vote m = … in L.find is_my_vote s.msgs`:
+   `ge` is let-bound inside `first_ge` and captures its parameter `v`. Specialization
+   inlines the local function into the call, then clones `find` at
+   `fun x -> le c x`. Today the file dies in axiom generation. The false goals are
+   tests/hof_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+type onat =
+  | NoneN : onat
+  | SomeN : nat -> onat
+
+let rec le (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S a -> (match y with
+            | Z -> false
+            | S b -> le a b)
+
+let rec find (f:nat -> bool) (l:nlist) = match l with
+  | NNil -> NoneN
+  | NCons x r -> if f x then SomeN x else find f r
+
+let first_ge (v:nat) (l:nlist) =
+  let ge x = le v x in
+  find ge l
+
+val first_ge_nil : v:nat -> Lemma(ensures first_ge v NNil = NoneN)
+let first_ge_nil v = ()
+
+val first_ge_hit : v:nat -> x:nat -> r:nlist ->
+  Lemma(ensures le v x = true ==> first_ge v (NCons x r) = SomeN x)
+let first_ge_hit v x r = ()
+
+val first_ge_skip : v:nat -> x:nat -> r:nlist ->
+  Lemma(ensures le v x = false ==> first_ge v (NCons x r) = first_ge v r)
+let first_ge_skip v x r = ()

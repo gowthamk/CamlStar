@@ -1,0 +1,32 @@
+module HofRejectLemma
+
+(* Rejection test: a lemma quantified over a function. Its statement ranges over every
+   `f`, which is outside the fragment in v1 (plan step H10 would specialize it per
+   use). Expected after specialization: a check error naming the lemma and the
+   parameter, e.g.
+     map_len_any: a lemma over a function (parameter f) is outside the fragment; state
+     it at a concrete function, or at an `assume val` symbol
+   and no VC. The supported way to state it is tests/hof_uninterp.cst's: an `assume
+   val` symbol in place of the quantified function. Today: `Fatal error: exception
+   Failure("axioms: higher-order field/return not supported")`. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+let rec len (l:nlist) = match l with
+  | NNil -> Z
+  | NCons x r -> S (len r)
+
+let rec map (f:nat -> nat) (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> NCons (f x) (map f r)
+
+val map_len_any : f:(nat -> nat) -> xs:nlist -> Lemma(ensures len (map f xs) = len xs)
+let rec map_len_any f xs = match xs with
+  | NNil -> ()
+  | NCons x r -> map_len_any f r

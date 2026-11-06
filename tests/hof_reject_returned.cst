@@ -1,0 +1,33 @@
+module HofRejectReturned
+
+(* Rejection test: a function produced by an application. `const_fn v` returns a
+   function, so the argument of `map` is neither a lambda nor a definition name, and
+   there is no body to substitute (rejection C1). Expected after specialization: a check
+   error naming the template and the argument, e.g.
+     map: the function argument `const_fn v` is not a lambda or a definition name
+   and no VC. (Partial application, plan step H12, is a separate later extension.)
+   Today: `Fatal error: exception Failure("axioms: higher-order field/return not
+   supported")`. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+let rec len (l:nlist) = match l with
+  | NNil -> Z
+  | NCons x r -> S (len r)
+
+let rec map (f:nat -> nat) (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> NCons (f x) (map f r)
+
+let const_fn (v:nat) = fun (x:nat) -> v
+
+val map_const_len : v:nat -> xs:nlist -> Lemma(ensures len (map (const_fn v) xs) = len xs)
+let rec map_const_len v xs = match xs with
+  | NNil -> ()
+  | NCons x r -> map_const_len v r

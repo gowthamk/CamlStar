@@ -1,0 +1,22 @@
+module HofRejectStored
+
+(* Rejection test: a function stored in a constructor field. Function values are outside
+   the fragment; a function may only be passed to a definition and applied there.
+   Expected after specialization: a check error naming the type and constructor, e.g.
+     box: constructor Box has a function-typed field; a function may only be passed to
+     a definition and applied
+   and no VC. Today: `Fatal error: exception Failure("axioms: higher-order
+   field/return not supported")`. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type box =
+  | Box : (nat -> nat) -> box
+
+let apply_box (b:box) (x:nat) = match b with
+  | Box f -> f x
+
+val apply_succ : x:nat -> Lemma(ensures apply_box (Box (fun y -> S y)) x = S x)
+let apply_succ x = ()

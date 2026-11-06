@@ -1,0 +1,39 @@
+module HofCapture
+
+(* Regression test for higher-order specialization with captured variables. Both
+   lambdas below are `fun x -> le c x` up to renaming, with different captured values
+   (`v`, `w`), so they share one clone `filter__k c l` with the captured value as its
+   first parameter. `filter_ge2`'s goal and the postcondition of its call to
+   `filter_ge` therefore name the same clone application, which is what closes it.
+   Today the file dies in axiom generation. The false goals are tests/hof_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+let rec le (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S a -> (match y with
+            | Z -> false
+            | S b -> le a b)
+
+let rec filter (p:nat -> bool) (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> if p x then NCons x (filter p r) else filter p r
+
+let rec all_ge (v:nat) (l:nlist) = match l with
+  | NNil -> true
+  | NCons x r -> if le v x then all_ge v r else false
+
+val filter_ge : v:nat -> xs:nlist -> Lemma(ensures all_ge v (filter (fun x -> le v x) xs) = true)
+let rec filter_ge v xs = match xs with
+  | NNil -> ()
+  | NCons x r -> filter_ge v r
+
+(* another call site, another captured value, the same clone *)
+val filter_ge2 : w:nat -> ys:nlist -> Lemma(ensures all_ge w (filter (fun y -> le w y) ys) = true)
+let filter_ge2 w ys = filter_ge w ys
