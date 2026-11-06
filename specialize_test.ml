@@ -257,6 +257,85 @@ let () =
   check_bool "two expansions of `succ`: equal keys"
     (Specialize.key_equal (key "map" [ succ () ]) (key "map" [ succ () ])) "keys differ"
 
+(* ===== H4: find_templates ===== *)
+
+let () =
+  print_endline "find_templates:";
+  let templates src =
+    let parsed = Parse.parse_string src in
+    (parsed, Specialize.find_templates ~typed:(Infer.infer_module parsed) parsed) in
+  let parsed, ts = templates {|
+module T
+type nat = | Z : nat | S : nat -> nat
+type nlist = | NNil : nlist | NCons : nat -> nlist -> nlist
+let rec len (l:nlist) = match l with | NNil -> Z | NCons x r -> S (len r)
+let rec map (f:nat -> nat) (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> NCons (f x) (map f r)
+let apply_at (d:nat) (f:nat -> nat) = f d
+let compose (f:nat -> nat) (g:nat -> nat) (x:nat) = f (g x)
+let twice f x = S (f (f x))
+val find_or : f:(nat -> bool) -> d:nat -> l:nlist -> nat
+let rec find_or f d l = match l with
+  | NNil -> d
+  | NCons x r -> if f x then x else find_or f d r
+|} in
+  let show ts = String.concat "; " (List.map (fun t ->
+    Printf.sprintf "%s [%s]" t.Specialize.t_name
+      (String.concat "," (List.map (fun (i, _) -> string_of_int i) t.Specialize.t_funs))) ts) in
+  let want = "map [0]; apply_at [1]; compose [0,1]; twice [0]; find_or [0]" in
+  check_bool "templates and function-parameter positions (len is not one)"
+    (show ts = want) (Printf.sprintf "got  %s\n        want %s" (show ts) want);
+  check_bool "parameter types are arrows"
+    (List.for_all (fun t -> List.for_all (fun (_, ty) ->
+       match ty with T_arrow _ -> true | _ -> false) t.Specialize.t_funs) ts)
+    "a non-arrow type";
+  (* the binding is the parsed one: twice's `f` has no annotation there (the type came
+     from inference) *)
+  let parsed_twice = List.find_map (fun se -> match se.sig_el with
+    | Sig_let { lbs = [ lb ]; _ } when lb.lb_name.vname = "twice" -> Some lb
+    | _ -> None) parsed.mod_decls in
+  (match List.find_opt (fun t -> t.Specialize.t_name = "twice") ts, parsed_twice with
+   | Some t, Some lb ->
+     check_bool "t_lb is the parsed binding, unannotated" (t.Specialize.t_lb == lb
+       && (match lb.lb_def with Tm_abs { xtyp = None; _ } -> true | _ -> false))
+       "not the parsed binding"
+   | _ -> check_bool "t_lb is the parsed binding, unannotated" false "twice missing");
+
+  (* a polymorphic template is an error (tests/hof_reject_poly.cst) *)
+  let poly = {|
+module P
+type list 'a = | Nil : list 'a | Cons : 'a -> list 'a -> list 'a
+let rec map (f:'a -> 'a) (l:list 'a) = match l with
+  | Nil -> Nil
+  | Cons x r -> Cons (f x) (map f r)
+|} in
+  let want = "map: a polymorphic template (type variable 'a) cannot be specialized; \
+              write a monomorphic copy" in
+  (match templates poly with
+   | _ -> check_bool "polymorphic template rejected" false "accepted"
+   | exception Specialize.Specialize_error msg ->
+     check_bool "polymorphic template rejected" (msg = want)
+       (Printf.sprintf "message: %s\n        want:    %s" msg want));
+
+  (* the same, unannotated: the type variable is generalized by inference *)
+  (match templates "module G\nlet twice f x = f (f x)\n" with
+   | _ -> check_bool "polymorphic template rejected (inferred)" false "accepted"
+   | exception Specialize.Specialize_error msg ->
+     check_bool "polymorphic template rejected (inferred)"
+       (String.length msg > 30 && String.sub msg 0 30 = "twice: a polymorphic template ") msg);
+
+  (* a polymorphic first-order definition is not a template (tests/prop_list_append.cst) *)
+  let _, ts = templates {|
+module A
+type list 'a = | Nil : list 'a | Cons : 'a -> list 'a -> list 'a
+let rec app x y = match x with | Nil -> y | Cons h t -> Cons h (app t y)
+val app_assoc : x:list 'a -> y:list 'a -> z:list 'a ->
+        Lemma(ensures app (app x y) z = app x (app y z))
+let rec app_assoc x y z = match x with | Nil -> () | Cons h t -> app_assoc t y z
+|} in
+  check_bool "polymorphic first-order definitions: no template" (ts = []) (show ts)
+
 let () =
   if !failures > 0 then begin
     Printf.printf "%d failure(s)\n" !failures;

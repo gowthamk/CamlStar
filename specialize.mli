@@ -62,3 +62,17 @@ val key_of : template:string -> Ast.term list -> key * Ast.var list
 
 (* Same template, and the closed lambdas alpha-equal position by position. *)
 val key_equal : key -> key -> bool
+
+(* A template: a top-level definition with a function parameter. [t_lb] is the parsed
+   binding, [t_funs] the 0-based positions of its function parameters with their types
+   (`map (f:nat -> nat) l` ⇒ [(0, nat -> nat)]), [t_scheme] its type from [typed]. *)
+type template = { t_name : string; t_lb : Ast.letbinding; t_funs : (int * Ast.typ) list;
+                  t_scheme : Ast.tscheme }
+
+(* [find_templates ~typed parsed]: the templates among [parsed]'s top-level `let`s, in
+   order, with types read from [typed] (the user's `val`, else the inferred scheme, so
+   an unannotated parameter used as a function counts). Raises [Specialize_error] for a
+   polymorphic template: `map: a polymorphic template (type variable 'a) cannot be
+   specialized; write a monomorphic copy`. A polymorphic first-order definition is not
+   a template and is fine. *)
+val find_templates : typed:Ast.modul -> Ast.modul -> template list

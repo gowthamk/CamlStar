@@ -117,6 +117,55 @@ let key_equal (a : key) (b : key) : bool =
   && List.length a.k_lams = List.length b.k_lams
   && List.for_all2 Subst.alpha_equal_term a.k_lams b.k_lams
 
+(* ===== H4: templates ===== *)
+
+(* A top-level definition with at least one parameter of function type. [t_lb] is the
+   parsed binding (the clone is copied from it), [t_funs] the positions of its function
+   parameters (0-based) with their types, [t_scheme] its type from [typed]. *)
+type template = { t_name : string; t_lb : letbinding; t_funs : (int * typ) list;
+                  t_scheme : tscheme }
+
+(* The function-typed parameters of a type: the domains of its arrows that are arrows. *)
+let fun_params (ty : typ) : (int * typ) list =
+  let rec go i ty = match ty with
+    | T_arrow { adom = T_arrow _ as d; acod; _ } -> (i, d) :: go (i + 1) acod
+    | T_arrow { acod; _ } -> go (i + 1) acod
+    | T_refine _ -> [] in
+  go 0 ty
+
+(* Types come from [typed]: every top-level binding there has a scheme, the user's `val`
+   or the inferred one, and inference keeps the binders, so a parsed binding is found
+   by its variable id. A polymorphic template has no sort to specialize at (no
+   polymorphism in the encoding), so it is an error. Top-level `let`s only; those
+   inside `expect_failure` are not looked at. *)
+let find_templates ~(typed : modul) (parsed : modul) : template list =
+  let schemes = Hashtbl.create 16 in
+  List.iter (fun se -> match se.sig_el with
+    | Sig_let lbs ->
+      List.iter (fun lb -> Option.iter (Hashtbl.replace schemes lb.lb_name.vid) lb.lb_scheme)
+        lbs.lbs
+    | _ -> ()) typed.mod_decls;
+  List.concat_map (fun se -> match se.sig_el with
+    | Sig_let lbs ->
+      List.filter_map (fun lb ->
+        match Hashtbl.find_opt schemes lb.lb_name.vid with
+        | None -> None
+        | Some sch ->
+          (match fun_params sch.ts_typ with
+           | [] -> None
+           | funs ->
+             (* the type's variables, not [ts_vars]: a `'a` written in a binder
+                annotation is rigid during inference and is not generalized *)
+             (match Subst.free_tyvars_typ sch.ts_typ with
+              | tv :: _ ->
+                raise (Specialize_error (Printf.sprintf
+                  "%s: a polymorphic template (type variable '%s) cannot be specialized; \
+                   write a monomorphic copy" lb.lb_name.vname tv.tvname))
+              | [] ->
+                Some { t_name = lb.lb_name.vname; t_lb = lb; t_funs = funs; t_scheme = sch })))
+        lbs.lbs
+    | _ -> []) parsed.mod_decls
+
 let specialize_module ~(typed : modul) (parsed : modul) : modul =
   ignore typed;
   parsed
