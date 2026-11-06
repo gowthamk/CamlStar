@@ -165,6 +165,46 @@ let plus2 (x:nat) =
       (Specialize.beta (inl xbody)) (app (fv "S") [ app (fv "S") [ v px ] ])
   | _ -> check_bool "parsed `let g y = S y in g (g x)`, then beta" false "plus2 not found"
 
+(* ===== H3c: as_lambda ===== *)
+
+let () =
+  print_endline "as_lambda:";
+  let nat = mk_base (B_app (lid_of_str "nat", [])) in
+  let arrow d c = mk_arrow (fresh_var "_") d c in
+  let nat_nat = arrow nat nat and nat_nat_bool = arrow nat (arrow nat t_bool) in
+  let x = fresh_var "x" and y = fresh_var "y" and a = fresh_var "a"
+  and vv = fresh_var "v" and f = fresh_var "f" in
+  let asl = Specialize.as_lambda ~template:"map" in
+
+  (* a lambda is returned as is *)
+  let lm = lam x (app (fv "S") [ v x ]) in
+  check_bool "lambda stays" (asl nat_nat lm == lm) "the lambda was rebuilt";
+
+  (* names, η-expanded to the parameter's arity *)
+  check "definition name, arity 1" (asl nat_nat (fv "succ")) (lam x (app (fv "succ") [ v x ]));
+  check "definition name, arity 2" (asl nat_nat_bool (fv "le"))
+    (lam x (lam y (app (fv "le") [ v x; v y ])));
+  check "constructor name" (asl nat_nat (fv "S")) (lam x (app (fv "S") [ v x ]));
+
+  (* composes with beta, as at a clone's `f a`: (as_lambda succ) a ~> succ a *)
+  check "expanded name applied, then beta"
+    (Specialize.beta (app (asl nat_nat (fv "succ")) [ v a ]))
+    (app (fv "succ") [ v a ]);
+
+  (* rejection C1, with the message of tests/hof_reject_returned.cst *)
+  let rejects name arg want =
+    match asl nat_nat arg with
+    | t -> check_bool name false ("accepted as " ^ string_of_term t)
+    | exception Specialize.Specialize_error msg ->
+      check_bool name (msg = want) (Printf.sprintf "message: %s\n        want:    %s" msg want)
+  in
+  rejects "C1: an application (a computed function)" (app (fv "const_fn") [ v vv ])
+    "map: the function argument `const_fn v` is not a lambda or a definition name";
+  rejects "C1: a partial application (H12)" (app (fv "le") [ v vv ])
+    "map: the function argument `le v` is not a lambda or a definition name";
+  rejects "C1: a variable" (v f)
+    "map: the function argument `f` is not a lambda or a definition name"
+
 let () =
   if !failures > 0 then begin
     Printf.printf "%d failure(s)\n" !failures;

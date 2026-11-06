@@ -32,3 +32,16 @@ val beta : Ast.term -> Ast.term
    binding) replaced by [b] with the lambda substituted for [h], each copy with fresh
    binders. Leaves the applications it creates, `(fun x -> e) a`, to [beta]. *)
 val inline_local_lambdas : Ast.term -> Ast.term
+
+(* A program specialization rejects (the C1/C2 rejections, a polymorphic template, …).
+   The message names the template and the offending term; terms carry no location, so
+   the driver adds the declaration's range. *)
+exception Specialize_error of string
+
+(* [as_lambda ~template pty arg]: the argument [arg], passed for a parameter of
+   function type [pty] of [template], as a lambda. A lambda is returned as is; a
+   top-level name is η-expanded to [pty]'s arity (`succ` ⇒ `fun x1 -> succ x1`, `le`
+   at `nat -> nat -> bool` ⇒ `fun x1 x2 -> le x1 x2`); anything else raises
+   [Specialize_error] (rejection C1), e.g. `map: the function argument `const_fn v`
+   is not a lambda or a definition name`. *)
+val as_lambda : template:string -> Ast.typ -> Ast.term -> Ast.term

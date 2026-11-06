@@ -54,6 +54,37 @@ let rec inline_local_lambdas (t : term) : term =
                       inline_local_lambdas body))
   | _ -> map_subterms inline_local_lambdas t
 
+(* ===== H3c: a function argument as a lambda ===== *)
+
+exception Specialize_error of string
+
+(* The number of arguments a function of type [ty] takes: its arrows, curried. *)
+let rec arity (ty : typ) : int =
+  match ty with
+  | T_arrow a -> 1 + arity a.acod
+  | T_refine _ -> 0
+
+(* A lambda stays. A top-level name (a definition, an `assume val`, a constructor) is
+   η-expanded to the arity of the parameter it is passed for, [pty]: `succ` at
+   `f:(nat -> nat)` becomes `fun x -> succ x`. Taking the arity from the parameter, not
+   from the name's own type, gives the lambda exactly the parameter's shape. Anything
+   else has no body to substitute (rejection C1): an application such as `const_fn v`
+   (a function computed at run time), a partial application `le v` (plan step H12),
+   a variable (a function parameter passed on; a local function let is already gone
+   by [inline_local_lambdas]). Terms carry no location, so the caller adds the
+   declaration's. *)
+let as_lambda ~(template : string) (pty : typ) (arg : term) : term =
+  match arg with
+  | Tm_abs _ -> arg
+  | Tm_fvar _ ->
+    let xs = List.init (arity pty) (fun i -> fresh_var (Printf.sprintf "x%d" (i + 1))) in
+    List.fold_right (fun x body -> Tm_abs { xbinder = x; xtyp = None; xbody = body })
+      xs (mk_app arg (List.map (fun x -> Tm_var x) xs))
+  | _ ->
+    raise (Specialize_error (Printf.sprintf
+      "%s: the function argument `%s` is not a lambda or a definition name"
+      template (string_of_term arg)))
+
 let specialize_module ~(typed : modul) (parsed : modul) : modul =
   ignore typed;
   parsed
