@@ -496,6 +496,83 @@ val map__wrong : l:nlist -> r:nlist{len r = S (len l)}
      | Some sch -> not (Subst.alpha_equal_typ sch.ts_typ (want "map__wrong"))
      | None -> false) "matched map__wrong"
 
+(* ===== H5c: template_call, call_site ===== *)
+
+let () =
+  print_endline "call sites:";
+  let parsed = Parse.parse_string {|
+module S
+type nat = | Z : nat | S : nat -> nat
+type nlist = | NNil : nlist | NCons : nat -> nlist -> nlist
+let rec le (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S a -> (match y with | Z -> false | S b -> le a b)
+let rec len (l:nlist) = match l with | NNil -> Z | NCons x r -> S (len r)
+let succ (x:nat) = S x
+let rec find (f:nat -> bool) (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> if f x then NCons x NNil else find f r
+let apply_at (d:nat) (f:nat -> nat) = f d
+let compose (f:nat -> nat) (g:nat -> nat) (x:nat) = f (g x)
+|} in
+  let ts = Specialize.find_templates ~typed:(Infer.infer_module parsed) parsed in
+  let template n = List.find (fun t -> t.Specialize.t_name = n) ts in
+  let x = fresh_var "x" and y = fresh_var "y" and vv = fresh_var "v" and ww = fresh_var "w"
+  and l = fresh_var "l" and d = fresh_var "d" and self = fresh_var "find" in
+  let le_at a = lam x (app (fv "le") [ v a; v x ]) and succ_lam = lam y (app (fv "S") [ v y ]) in
+  let terms ts = String.concat "; " (List.map string_of_term ts) in
+  let check_args name got want =
+    check_bool name (List.length got = List.length want
+                     && List.for_all2 Subst.alpha_equal_term got want)
+      (Printf.sprintf "got [%s], want [%s]" (terms got) (terms want)) in
+  let names = function
+    | Some (t, args) -> t.Specialize.t_name ^ " / " ^ terms args | None -> "none" in
+
+  (* recognizing a call *)
+  let call = app (fv "find") [ le_at vv; v l ] in
+  check_bool "a call of find is a template call"
+    (match Specialize.template_call ts call with
+     | Some (t, [ _; _ ]) -> t.Specialize.t_name = "find" | _ -> false)
+    (names (Specialize.template_call ts call));
+  check_bool "len l is not" (Specialize.template_call ts (app (fv "len") [ v l ]) = None) "matched";
+  check_bool "a self-call (Tm_var head) is not"
+    (Specialize.template_call ts (app (v self) [ le_at vv; v l ]) = None) "matched";
+  check_bool "a bare name is not" (Specialize.template_call ts (fv "find") = None) "matched";
+
+  (* the key and the clone's arguments *)
+  let k_v, args_v = Specialize.call_site (template "find") [ le_at vv; v l ] in
+  check_bool "find (fun x -> le v x) l: the key of the lambda"
+    (Specialize.key_equal k_v (fst (Specialize.key_of ~template:"find" [ le_at vv ]))) "key differs";
+  check_args "  clone arguments [v; l]" args_v [ v vv; v l ];
+  let k_w, args_w = Specialize.call_site (template "find") [ le_at ww; v l ] in
+  check_bool "a second site capturing w: same key" (Specialize.key_equal k_v k_w) "keys differ";
+  check_args "  clone arguments [w; l]" args_w [ v ww; v l ];
+
+  let k_a, args_a = Specialize.call_site (template "apply_at") [ v d; fv "succ" ] in
+  check_bool "apply_at d succ: succ η-expanded into the key"
+    (Specialize.key_equal k_a
+       (fst (Specialize.key_of ~template:"apply_at" [ lam x (app (fv "succ") [ v x ]) ])))
+    "key differs";
+  check_args "  clone arguments [d] (the function argument removed)" args_a [ v d ];
+
+  let k_c, args_c = Specialize.call_site (template "compose") [ succ_lam; fv "succ"; v x ] in
+  check_bool "compose with two function arguments: two lambdas in the key"
+    (List.length k_c.Specialize.k_lams = 2) "not two";
+  check_args "  clone arguments [x]" args_c [ v x ];
+
+  (* errors *)
+  let fails name f want =
+    match f () with
+    | _ -> check_bool name false "accepted"
+    | exception Specialize.Specialize_error msg ->
+      check_bool name (msg = want) (Printf.sprintf "message: %s\n        want:    %s" msg want) in
+  fails "a call missing its function argument"
+    (fun () -> Specialize.call_site (template "apply_at") [ v d ])
+    "apply_at: a call without all its function arguments (a partial application) is not supported";
+  fails "C1 through as_lambda"
+    (fun () -> Specialize.call_site (template "find") [ app (fv "const_fn") [ v vv ]; v l ])
+    "find: the function argument `const_fn v` is not a lambda or a definition name"
+
 let () =
   if !failures > 0 then begin
     Printf.printf "%d failure(s)\n" !failures;

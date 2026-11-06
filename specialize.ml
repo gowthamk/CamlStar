@@ -272,6 +272,34 @@ let clone_val (t : template) (k : key) ~(ctypes : typ list) : tscheme option =
         cs ctypes body in
     Some { ts_vars = []; ts_typ = ty }
 
+(* ===== H5c: call sites ===== *)
+
+(* [e] as a call of a template: its head is the template's name. Outside its own body a
+   definition is referred to as `Tm_fvar` (inside, as `Tm_var`, which [clone_body]
+   handles), so a self-call is never matched here. *)
+let template_call (ts : template list) (e : term) : (template * term list) option =
+  match spine e with
+  | (Tm_fvar l, (_ :: _ as args)) ->
+    Option.map (fun t -> (t, args)) (List.find_opt (fun t -> t.t_name = l.bname) ts)
+  | _ -> None
+
+(* The call `g ā` of template [t]: the key of its function arguments (each made a
+   lambda by [as_lambda]) and the clone's arguments, the captured variables first and
+   then the non-function arguments in order. The caller names the clone of the key and
+   builds `mk_app (Tm_fvar name) args`: `find (fun x -> le v x) l` ⇒ key `find, fun c1
+   -> fun x -> le c1 x` and arguments [v; l], so `find__0 v l`. *)
+let call_site (t : template) (args : term list) : key * term list =
+  let nfun = 1 + List.fold_left (fun m (i, _) -> max m i) 0 t.t_funs in
+  if List.length args < nfun then
+    raise (Specialize_error (Printf.sprintf
+      "%s: a call without all its function arguments (a partial application) is not \
+       supported" t.t_name));
+  let lams = List.map (fun (i, pty) -> as_lambda ~template:t.t_name pty (List.nth args i))
+      t.t_funs in
+  let k, cs = key_of ~template:t.t_name lams in
+  let rest = List.filteri (fun i _ -> not (List.mem_assoc i t.t_funs)) args in
+  (k, List.map (fun c -> Tm_var c) cs @ rest)
+
 let specialize_module ~(typed : modul) (parsed : modul) : modul =
   ignore typed;
   parsed

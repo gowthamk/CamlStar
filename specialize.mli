@@ -100,3 +100,15 @@ val clone_body : template -> key -> name:string -> Ast.letbindings
    in either tree, so the caller reads them off the clone's inferred parameters. None
    when the template has no `val`. *)
 val clone_val : template -> key -> ctypes:Ast.typ list -> Ast.tscheme option
+
+(* [template_call ts e]: [e] as a call `g ā` of one of the templates [ts] (a `Tm_fvar`
+   head with at least one argument), with its arguments. A template's self-calls are
+   `Tm_var` and are not matched. *)
+val template_call : template list -> Ast.term -> (template * Ast.term list) option
+
+(* [call_site t args]: for the call `g args` of template [t], the key (function
+   arguments made lambdas by [as_lambda]) and the clone's arguments: captured variables
+   first, then the non-function arguments in order. `find (fun x -> le v x) l` ⇒ key
+   `find, fun c1 -> fun x -> le c1 x`, arguments [v; l]. Raises [Specialize_error] for a
+   call missing a function argument, and C1 through [as_lambda]. *)
+val call_site : template -> Ast.term list -> key * Ast.term list
