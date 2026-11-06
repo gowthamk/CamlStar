@@ -2,12 +2,12 @@ module HofRejectReturned
 
 (* Rejection test: a function produced by an application. `const_fn v` returns a
    function, so the argument of `map` is neither a lambda nor a definition name, and
-   there is no body to substitute (rejection C1). Expected after specialization: a check
-   error naming the template and the argument, e.g.
-     map: the function argument `const_fn v` is not a lambda or a definition name
-   and no VC. (Partial application, plan step H12, is a separate later extension.)
-   Today: `Fatal error: exception Failure("axioms: higher-order field/return not
-   supported")`. *)
+   there is no body to substitute (rejection C1). Expected: a specialization error
+   naming the template and the argument, and no VC. (Partial application, plan step
+   H12, is a separate later extension.) Run by tests/reject_hof.sh, which checks the
+   line below.
+EXPECT: map: the function argument `const_fn v` is not a lambda or a definition name
+*)
 
 type nat =
   | Z : nat

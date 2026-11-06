@@ -45,8 +45,11 @@ val beta : Ast.term -> Ast.term
 val inline_local_lambdas : Ast.term -> Ast.term
 
 (* A program specialization rejects (the C1/C2 rejections, a polymorphic template, …).
-   The message names the template and the offending term; terms carry no location, so
-   the driver adds the declaration's range. *)
+   The message names the template and the offending term. Terms carry no location, so
+   [specialize_module] appends the range of the declaration concerned, `msg (file:l:c-l:c)`:
+   the caller's for a rejection at a call site or in a clone made for it, the template's
+   for a polymorphic template, a lemma over a function and a clone's `val`. The helpers
+   below raise it without a range. *)
 exception Specialize_error of string
 
 (* [as_lambda ~template pty arg]: the argument [arg], passed for a parameter of
@@ -81,7 +84,7 @@ val key_equal : key -> key -> bool
    (`map (f:nat -> nat) l` ⇒ [(0, nat -> nat)]), [t_scheme] its type from [typed]
    (shape only), [t_val] the user's `val` from [parsed] with its refinements. *)
 type template = { t_name : string; t_lb : Ast.letbinding; t_funs : (int * Ast.typ) list;
-                  t_scheme : Ast.tscheme; t_val : Ast.tscheme option }
+                  t_scheme : Ast.tscheme; t_val : Ast.tscheme option; t_rng : Ast.range }
 
 (* [find_templates ~typed parsed]: the templates among [parsed]'s top-level `let`s, in
    order, with types read from [typed] (the user's `val`, else the inferred scheme, so

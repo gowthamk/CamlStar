@@ -312,11 +312,12 @@ let rec map (f:'a -> 'a) (l:list 'a) = match l with
 |} in
   let want = "map: a polymorphic template (type variable 'a) cannot be specialized; \
               write a monomorphic copy" in
+  (* the message, then the template's declaration range *)
   (match templates poly with
-   | _ -> check_bool "polymorphic template rejected" false "accepted"
+   | _ -> check_bool "polymorphic template rejected, located" false "accepted"
    | exception Specialize.Specialize_error msg ->
-     check_bool "polymorphic template rejected" (msg = want)
-       (Printf.sprintf "message: %s\n        want:    %s" msg want));
+     check_bool "polymorphic template rejected, located" (msg = want ^ " (<string>:4:0-6:36)")
+       (Printf.sprintf "message: %s\n        want:    %s (<string>:4:0-6:36)" msg want));
 
   (* the same, unannotated: the type variable is generalized by inference *)
   (match templates "module G\nlet twice f x = f (f x)\n" with

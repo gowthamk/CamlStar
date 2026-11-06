@@ -125,7 +125,12 @@ let key_equal (a : key) (b : key) : bool =
    the user's `val` from [parsed], refinements included (inference erases a `val` to
    its shape, so [t_scheme] has none). *)
 type template = { t_name : string; t_lb : letbinding; t_funs : (int * typ) list;
-                  t_scheme : tscheme; t_val : tscheme option }
+                  t_scheme : tscheme; t_val : tscheme option; t_rng : range }
+
+(* A rejection message with the declaration it concerns: terms carry no location, so the
+   range is that of the enclosing top-level declaration. *)
+let at (rng : range) (msg : string) : string =
+  Printf.sprintf "%s (%s)" msg (string_of_range rng)
 
 (* The function-typed parameters of a type: the domains of its arrows that are arrows. *)
 let fun_params (ty : typ) : (int * typ) list =
@@ -162,12 +167,12 @@ let find_templates ~(typed : modul) (parsed : modul) : template list =
                 annotation is rigid during inference and is not generalized *)
              (match Subst.free_tyvars_typ sch.ts_typ with
               | tv :: _ ->
-                raise (Specialize_error (Printf.sprintf
+                raise (Specialize_error (at se.sig_rng (Printf.sprintf
                   "%s: a polymorphic template (type variable '%s) cannot be specialized; \
-                   write a monomorphic copy" lb.lb_name.vname tv.tvname))
+                   write a monomorphic copy" lb.lb_name.vname tv.tvname)))
               | [] ->
                 Some { t_name = lb.lb_name.vname; t_lb = lb; t_funs = funs; t_scheme = sch;
-                       t_val = List.assoc_opt lb.lb_name.vname vals })))
+                       t_val = List.assoc_opt lb.lb_name.vname vals; t_rng = se.sig_rng })))
         lbs.lbs
     | _ -> []) parsed.mod_decls
 
@@ -247,6 +252,22 @@ let rec map_typ_terms (g : term -> term) (ty : typ) : typ =
 (* β-reduce every refinement formula in a type ([beta] does not enter types). *)
 let beta_typ (ty : typ) : typ = map_typ_terms beta ty
 
+(* A `match`, or a `let` (an `if` is parsed as `let s = c in match s …`), anywhere in a
+   term / in a refinement of a type: what a formula cannot contain yet (todo 53b). *)
+let rec has_match (t : term) : bool =
+  match t with
+  | Tm_match _ | Tm_let _ -> true
+  | Tm_var _ | Tm_fvar _ | Tm_const _ -> false
+  | Tm_abs a -> has_match a.xbody
+  | Tm_app (f, a) -> has_match f || has_match a
+  | Tm_ascribed (e, _) -> has_match e
+  | Tm_quant q -> has_match q.qbody
+
+let rec typ_has_match (ty : typ) : bool =
+  match ty with
+  | T_refine r -> has_match r.rphi
+  | T_arrow a -> typ_has_match a.adom || typ_has_match a.acod
+
 (* The template's `val` at key [k]: each function binder dropped and its lambda (opened
    at the `val`'s own fresh c1 … ck) substituted in the rest of the type, every
    refinement β-reduced, and arrows `cj : ctypes_j` put first. The binder names of a
@@ -271,6 +292,14 @@ let clone_val (t : template) (k : key) ~(ctypes : typ list) : tscheme option =
          | None -> T_arrow { a with acod = drop (i + 1) a.acod })
       | T_refine _ -> ty in
     let body = beta_typ (drop 0 sch.ts_typ) in
+    (* the lambda's body would put a `match` in a formula, which the encoding cannot
+       read yet; a named predicate passed instead is η-expanded to an application *)
+    if typ_has_match body && not (typ_has_match sch.ts_typ) then
+      raise (Specialize_error (Printf.sprintf
+        "%s: the function argument `%s` has a `match` or `if` in its body, which would \
+         appear in the refinement of the clone's `val`; formulas with a `match` are not \
+         supported yet: define it as a top-level predicate and pass its name"
+        t.t_name (String.concat ", " (List.map string_of_term (List.filter has_match lams)))));
     let ty = List.fold_right2 (fun c cty acc -> T_arrow { abinder = c; adom = cty; acod = acc })
         cs ctypes body in
     Some { ts_vars = []; ts_typ = ty }
@@ -334,11 +363,24 @@ let specialize_module ~(typed : modul) (parsed : modul) : modul =
   let ts = find_templates ~typed parsed in
   List.iter (fun t ->
     if is_lemma_typ t.t_scheme.ts_typ then
-      err "%s: a lemma over a function (parameter %s) is outside the fragment; state it \
-           at a concrete function, or at an `assume val` symbol" t.t_name
+      raise (Specialize_error (at t.t_rng (Printf.sprintf
+        "%s: a lemma over a function (parameter %s) is outside the fragment; state it \
+         at a concrete function, or at an `assume val` symbol" t.t_name
         (match peel_abs t.t_lb.lb_def with
-         | ps, _ -> (List.nth ps (fst (List.hd t.t_funs))).xbinder.vname))
+         | ps, _ -> (List.nth ps (fst (List.hd t.t_funs))).xbinder.vname)))))
     ts;
+  (* a function stored in a constructor is a function value, outside the restriction *)
+  let rec domains ty = match ty with T_arrow a -> a.adom :: domains a.acod | T_refine _ -> [] in
+  List.iter (fun se -> match se.sig_el with
+    | Sig_inductive ind ->
+      List.iter (fun dc ->
+        if List.exists (function T_arrow _ -> true | T_refine _ -> false)
+             (domains dc.dc_typ.ts_typ) then
+          raise (Specialize_error (at se.sig_rng (Printf.sprintf
+            "%s: constructor %s has a function-typed field; a function may only be passed \
+             to a definition and applied" ind.ind_name.bname dc.dc_name.bname))))
+        ind.ind_ctors
+    | _ -> ()) parsed.mod_decls;
   let is_template n = List.exists (fun t -> t.t_name = n) ts in
   let clones : (key * string) list ref = ref [] in      (* key -> clone name *)
   let made : (template * key * letbindings) list ref = ref [] in
@@ -380,6 +422,8 @@ let specialize_module ~(typed : modul) (parsed : modul) : modul =
       | el -> el in
     { se with sig_el = el } in
   let decls = List.concat_map (fun se ->
+    (* every rejection below, a clone's included, is reported at this declaration *)
+    try
     match se.sig_el with
     | Sig_let lbs when List.exists (fun lb -> is_template lb.lb_name.vname) lbs.lbs ->
       (match List.find_opt (fun lb -> not (is_template lb.lb_name.vname)) lbs.lbs with
@@ -392,7 +436,8 @@ let specialize_module ~(typed : modul) (parsed : modul) : modul =
       let cl = !pending in
       pending := [];
       List.map (fun lbs -> { se with sig_el = Sig_let lbs; sig_quals = []; sig_attrs = [] }) cl
-      @ [ se' ]) parsed.mod_decls in
+      @ [ se' ]
+    with Specialize_error m -> raise (Specialize_error (at se.sig_rng m))) parsed.mod_decls in
   let m1 = { parsed with mod_decls = decls } in
   (* the clones' `val`s, (A): captured parameters' types read off one inference *)
   let with_val = List.filter (fun (t, _, _) -> t.t_val <> None) !made in
@@ -410,7 +455,9 @@ let specialize_module ~(typed : modul) (parsed : modul) : modul =
                    |> List.map (fun a -> match a.xtyp with
                        | Some ty -> ty
                        | None -> err "%s: no type inferred for a captured variable" lb.lb_name.vname) in
-      Option.map (fun sch -> (lb.lb_name.vid, (lb.lb_name.vname, sch))) (clone_val t k ~ctypes))
+      let v = try clone_val t k ~ctypes
+              with Specialize_error m -> raise (Specialize_error (at t.t_rng m)) in
+      Option.map (fun sch -> (lb.lb_name.vid, (lb.lb_name.vname, sch))) v)
       with_val in
     { m1 with mod_decls = List.concat_map (fun se -> match se.sig_el with
         | Sig_let { lbs = [ lb ]; _ } when List.mem_assoc lb.lb_name.vid vals ->

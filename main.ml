@@ -146,4 +146,7 @@ let () =
        exit 1
      | Check.Check_error msg ->
        Printf.eprintf "check error: %s\n" msg;
+       exit 1
+     | Specialize.Specialize_error msg ->
+       Printf.eprintf "specialization error: %s\n" msg;
        exit 1)

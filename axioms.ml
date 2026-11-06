@@ -8,7 +8,9 @@ let rel_name (s : string) : string = s ^ "_rel"
 
 let base_of_typ (t : typ) : base_typ =
   match t with T_refine { rbase; _ } -> rbase
-             | T_arrow _ -> failwith "axioms: higher-order field/return not supported"
+             | T_arrow _ -> failwith "axioms: a function-typed field, parameter or result \
+                                      is outside the fragment (a function may only be \
+                                      passed to a definition and applied there)"
 
 (* apply an uninterpreted relation/constructor symbol to argument terms *)
 let apply (name : string) (args : term list) : term =

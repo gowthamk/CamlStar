@@ -2,11 +2,10 @@ module HofRejectStored
 
 (* Rejection test: a function stored in a constructor field. Function values are outside
    the fragment; a function may only be passed to a definition and applied there.
-   Expected after specialization: a check error naming the type and constructor, e.g.
-     box: constructor Box has a function-typed field; a function may only be passed to
-     a definition and applied
-   and no VC. Today: `Fatal error: exception Failure("axioms: higher-order
-   field/return not supported")`. *)
+   Expected: a specialization error naming the type and constructor, and no VC. Run by
+   tests/reject_hof.sh, which checks the line below.
+EXPECT: box: constructor Box has a function-typed field; a function may only be passed to a definition and applied
+*)
 
 type nat =
   | Z : nat

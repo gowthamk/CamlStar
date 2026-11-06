@@ -1,12 +1,11 @@
 module HofRejectPoly
 
 (* Rejection test: a polymorphic template. Without polymorphism in the encoding a
-   template over `'a` has no sort to specialize at, so v1 rejects it. Expected after
-   specialization: a check error naming the template and the type variable, e.g.
-     map: a polymorphic template (type variable 'a) cannot be specialized; write a
-     monomorphic copy
-   and no VC. Today: `Fatal error: exception Failure("axioms: higher-order
-   field/return not supported")`. *)
+   template over `'a` has no sort to specialize at, so v1 rejects it. Expected: a
+   specialization error naming the template and the type variable, and no VC. Run by
+   tests/reject_hof.sh, which checks the line below.
+EXPECT: map: a polymorphic template (type variable 'a) cannot be specialized; write a monomorphic copy
+*)
 
 type nat =
   | Z : nat
