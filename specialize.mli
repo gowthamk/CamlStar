@@ -45,3 +45,20 @@ exception Specialize_error of string
    [Specialize_error] (rejection C1), e.g. `map: the function argument `const_fn v`
    is not a lambda or a definition name`. *)
 val as_lambda : template:string -> Ast.typ -> Ast.term -> Ast.term
+
+(* The clone key: a template and its function arguments (lambdas, after [as_lambda]),
+   each closed over the captured variables `c1 … ck`. Two call sites whose lambdas
+   differ only in the captured values have equal keys and share one clone. *)
+type key = { k_template : string; k_lams : Ast.term list }
+
+(* [captured lams]: the free local variables of [lams], in order of first occurrence
+   (top-level names are not variables). *)
+val captured : Ast.term list -> Ast.var list
+
+(* [key_of ~template lams] = (key, cs): the key, and the captured variables [cs], which
+   the call site passes to the clone first (`find (fun x -> le v x) l` ⇒ key `find,
+   fun c1 -> fun x -> le c1 x`, cs = [v], call `find__0 v l`). *)
+val key_of : template:string -> Ast.term list -> key * Ast.var list
+
+(* Same template, and the closed lambdas alpha-equal position by position. *)
+val key_equal : key -> key -> bool

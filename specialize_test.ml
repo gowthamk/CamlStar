@@ -205,6 +205,58 @@ let () =
   rejects "C1: a variable" (v f)
     "map: the function argument `f` is not a lambda or a definition name"
 
+(* ===== H3d: captured, key_of, key_equal ===== *)
+
+let () =
+  print_endline "captured / key:";
+  let x = fresh_var "x" and y = fresh_var "y" and vv = fresh_var "v"
+  and ww = fresh_var "w" and c = fresh_var "c" in
+  let names vs = String.concat ", " (List.map (fun x -> x.vname) vs) in
+  let check_vars name got want =
+    check_bool name (List.length got = List.length want && List.for_all2 var_eq got want)
+      (Printf.sprintf "got [%s], want [%s]" (names got) (names want)) in
+  let le_at a = lam x (app (fv "le") [ v a; v x ]) in
+
+  (* captured: free local variables only, first occurrence first *)
+  check_vars "captured: v, not the top-level le" (Specialize.captured [ le_at vv ]) [ vv ];
+  check_vars "captured: order of first occurrence"
+    (Specialize.captured [ lam x (app (fv "f") [ v ww; v vv; v x; v ww ]) ]) [ ww; vv ];
+  check_vars "captured: bound variables are not"
+    (Specialize.captured [ lam x (app (fv "le") [ v x; v x ]) ]) [];
+  check_vars "captured: across two lambdas, shared once"
+    (Specialize.captured [ le_at vv; lam y (app (fv "lt") [ v vv; v y ]) ]) [ vv ];
+
+  (* the key's shape: find, fun c1 -> fun x -> le c1 x *)
+  let k_v, cs_v = Specialize.key_of ~template:"find" [ le_at vv ] in
+  check "key closes over c1" (List.hd k_v.Specialize.k_lams)
+    (lam c (lam x (app (fv "le") [ v c; v x ])));
+  check_vars "key_of returns the captured v" cs_v [ vv ];
+
+  (* hof_capture: two sites, different captured values, one clone *)
+  let k_w, cs_w = Specialize.key_of ~template:"find" [ le_at ww ] in
+  check_bool "same shape, different captured value: equal keys"
+    (Specialize.key_equal k_v k_w) "keys differ";
+  check_vars "  and the second site passes w" cs_w [ ww ];
+
+  let neq name k1 k2 =
+    check_bool name (not (Specialize.key_equal k1 k2)) "keys are equal" in
+  let key t lams = fst (Specialize.key_of ~template:t lams) in
+  neq "different body (le vs lt): different keys" k_v
+    (key "find" [ lam x (app (fv "lt") [ v vv; v x ]) ]);
+  neq "different template: different keys" k_v (key "filter" [ le_at vv ]);
+  neq "different capture pattern (v, w vs v, v): different keys"
+    (key "find" [ lam x (app (fv "f") [ v vv; v ww; v x ]) ])
+    (key "find" [ lam x (app (fv "f") [ v vv; v vv; v x ]) ]);
+
+  (* no capture: alpha-equal lambdas, and two η-expansions of the same name *)
+  check_bool "alpha-equal lambdas: equal keys"
+    (Specialize.key_equal (key "map" [ lam x (app (fv "S") [ v x ]) ])
+       (key "map" [ lam y (app (fv "S") [ v y ]) ])) "keys differ";
+  let nat = mk_base (B_app (lid_of_str "nat", [])) in
+  let succ () = Specialize.as_lambda ~template:"map" (mk_arrow (fresh_var "_") nat nat) (fv "succ") in
+  check_bool "two expansions of `succ`: equal keys"
+    (Specialize.key_equal (key "map" [ succ () ]) (key "map" [ succ () ])) "keys differ"
+
 let () =
   if !failures > 0 then begin
     Printf.printf "%d failure(s)\n" !failures;

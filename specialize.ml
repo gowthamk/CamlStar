@@ -85,6 +85,38 @@ let as_lambda ~(template : string) (pty : typ) (arg : term) : term =
       "%s: the function argument `%s` is not a lambda or a definition name"
       template (string_of_term arg)))
 
+(* ===== H3d: captured variables and the clone key ===== *)
+
+(* One clone per key: the template and its function arguments with the captured
+   variables abstracted. `find (fun x -> le v x)` and `find (fun x -> le w x)` share the
+   key `find, fun c1 -> fun x -> le c1 x`, so one clone `find__0 c1 l` serves both
+   sites, called as `find__0 v l` and `find__0 w l`. *)
+type key = { k_template : string; k_lams : term list }
+
+(* The lambdas' free local variables (top-level names are `Tm_fvar`, never captured),
+   in order of first occurrence across [lams]: the same order for two lambdas of the
+   same shape, which the key relies on. *)
+let captured (lams : term list) : var list =
+  List.fold_left (fun acc x -> if List.exists (var_eq x) acc then acc else acc @ [ x ])
+    [] (List.concat_map Subst.free_vars_term lams)
+
+(* The key, and the captured variables (the clone's extra first arguments at this call
+   site). Each lambda is closed over the same fresh binders `c1 … ck`, so position j
+   stands for the same captured variable in every component. *)
+let key_of ~(template : string) (lams : term list) : key * var list =
+  let cs = captured lams in
+  let cs' = List.mapi (fun i _ -> fresh_var (Printf.sprintf "c%d" (i + 1))) cs in
+  let s = List.map2 (fun c c' -> (c, Tm_var c')) cs cs' in
+  let close lam =
+    List.fold_right (fun c body -> Tm_abs { xbinder = c; xtyp = None; xbody = body })
+      cs' (Subst.subst_term s lam) in
+  ({ k_template = template; k_lams = List.map close lams }, cs)
+
+let key_equal (a : key) (b : key) : bool =
+  String.equal a.k_template b.k_template
+  && List.length a.k_lams = List.length b.k_lams
+  && List.for_all2 Subst.alpha_equal_term a.k_lams b.k_lams
+
 let specialize_module ~(typed : modul) (parsed : modul) : modul =
   ignore typed;
   parsed
