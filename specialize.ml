@@ -91,7 +91,7 @@ let as_lambda ~(template : string) (pty : typ) (arg : term) : term =
    variables abstracted. `find (fun x -> le v x)` and `find (fun x -> le w x)` share the
    key `find, fun c1 -> fun x -> le c1 x`, so one clone `find__0 c1 l` serves both
    sites, called as `find__0 v l` and `find__0 w l`. *)
-type key = { k_template : string; k_lams : term list }
+type key = { k_template : string; k_lams : term list; k_ncaptured : int }
 
 (* The lambdas' free local variables (top-level names are `Tm_fvar`, never captured),
    in order of first occurrence across [lams]: the same order for two lambdas of the
@@ -110,7 +110,7 @@ let key_of ~(template : string) (lams : term list) : key * var list =
   let close lam =
     List.fold_right (fun c body -> Tm_abs { xbinder = c; xtyp = None; xbody = body })
       cs' (Subst.subst_term s lam) in
-  ({ k_template = template; k_lams = List.map close lams }, cs)
+  ({ k_template = template; k_lams = List.map close lams; k_ncaptured = List.length cs }, cs)
 
 let key_equal (a : key) (b : key) : bool =
   String.equal a.k_template b.k_template
@@ -165,6 +165,71 @@ let find_templates ~(typed : modul) (parsed : modul) : template list =
                 Some { t_name = lb.lb_name.vname; t_lb = lb; t_funs = funs; t_scheme = sch })))
         lbs.lbs
     | _ -> []) parsed.mod_decls
+
+(* ===== H5a: the clone's body ===== *)
+
+let spine (t : term) : term * term list =
+  let rec go t args = match t with Tm_app (f, a) -> go f (a :: args) | h -> (h, args) in
+  go t []
+
+let rec peel_abs (t : term) : abs list * term =
+  match t with
+  | Tm_abs a -> let ps, b = peel_abs a.xbody in (a :: ps, b)
+  | b -> ([], b)
+
+(* The clone of template [t] at key [k], named [name]:
+     let [rec] name c1 … ck p̄ = body[f̄ := λ̄]   (β-reduced, self-calls rewritten)
+   where p̄ are the template's non-function parameters (annotations kept) and λ̄ the
+   key's lambdas opened at the clone's own c1 … ck (k.k_lams are in t.t_funs order).
+   Self-calls are rewritten first, while the function parameters are still variables:
+   `g … f … ā` becomes `name c1 … ck ā` (the captured values do not change along the
+   recursion, since `f` is passed unchanged). A self-call that passes anything other
+   than `f` itself for `f` would need a new clone per unfolding (rejection C2). In the
+   parsed tree a recursive definition refers to itself as `Tm_var` of its own binding,
+   and other declarations refer to it as `Tm_fvar`. The result is freshened, so two
+   clones of one template share no binder. *)
+let clone_body (t : template) (k : key) ~(name : string) : letbindings =
+  let err fmt = Printf.ksprintf (fun s -> raise (Specialize_error s)) fmt in
+  let params, body = peel_abs t.t_lb.lb_def in
+  let nfun = 1 + List.fold_left (fun m (i, _) -> max m i) 0 t.t_funs in
+  if List.length params < nfun then
+    err "%s: a function parameter is not written as a parameter of the definition" t.t_name;
+  let is_fun i = List.mem_assoc i t.t_funs in
+  let fparams = List.map (fun (i, _) -> (List.nth params i).xbinder) t.t_funs in
+  let others = List.filteri (fun i _ -> not (is_fun i)) params in
+  let self = t.t_lb.lb_name and clone_v = fresh_var name in
+  let cs = List.init k.k_ncaptured (fun i -> fresh_var (Printf.sprintf "c%d" (i + 1))) in
+  let cargs = List.map (fun c -> Tm_var c) cs in
+  let rec rw e =
+    match e with
+    | Tm_app _ ->
+      (match spine e with
+       | (Tm_var x, args) when var_eq x self ->
+         if List.length args < nfun then
+           err "%s: a recursive call without all its function arguments is not supported"
+             (self.vname);
+         List.iter2 (fun (i, _) f ->
+           match List.nth args i with
+           | Tm_var y when var_eq y f -> ()
+           | a -> err "%s: the recursive call passes `%s` for `%s`, not `%s` itself; \
+                       specialization would not terminate"
+                    self.vname (string_of_term a) f.vname f.vname)
+           t.t_funs fparams;
+         mk_app (Tm_var clone_v) (cargs @ List.map rw (List.filteri (fun i _ -> not (is_fun i)) args))
+       | (h, args) -> mk_app (rw h) (List.map rw args))
+    | Tm_var x when var_eq x self ->
+      err "%s: a recursive reference without its function arguments is not supported"
+        self.vname
+    | _ -> map_subterms rw e
+  in
+  let lams = List.map (fun l -> beta (mk_app l cargs)) k.k_lams in
+  let inner = List.fold_right (fun a b -> Tm_abs { a with xbody = b }) others (rw body) in
+  let inner = beta (Subst.subst_term (List.combine fparams lams) inner) in
+  let def = List.fold_right (fun c b -> Tm_abs { xbinder = c; xtyp = None; xbody = b }) cs inner in
+  let def = Subst.freshen_term def in
+  let is_rec = List.exists (var_eq clone_v) (Subst.free_vars_term def) in
+  { lb_rec = is_rec;
+    lbs = [ { lb_name = clone_v; lb_scheme = None; lb_def = def; lb_measure = None } ] }
 
 let specialize_module ~(typed : modul) (parsed : modul) : modul =
   ignore typed;

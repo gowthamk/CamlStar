@@ -48,8 +48,10 @@ val as_lambda : template:string -> Ast.typ -> Ast.term -> Ast.term
 
 (* The clone key: a template and its function arguments (lambdas, after [as_lambda]),
    each closed over the captured variables `c1 … ck`. Two call sites whose lambdas
-   differ only in the captured values have equal keys and share one clone. *)
-type key = { k_template : string; k_lams : Ast.term list }
+   differ only in the captured values have equal keys and share one clone.
+   [k_ncaptured] is k, the number of captured variables (the clone's leading
+   parameters). *)
+type key = { k_template : string; k_lams : Ast.term list; k_ncaptured : int }
 
 (* [captured lams]: the free local variables of [lams], in order of first occurrence
    (top-level names are not variables). *)
@@ -76,3 +78,14 @@ type template = { t_name : string; t_lb : Ast.letbinding; t_funs : (int * Ast.ty
    specialized; write a monomorphic copy`. A polymorphic first-order definition is not
    a template and is fine. *)
 val find_templates : typed:Ast.modul -> Ast.modul -> template list
+
+(* [clone_body t k ~name]: the first-order clone of template [t] at key [k] (whose
+   lambdas are in [t.t_funs] order), as a `let [rec]` group of one binding [name]:
+   parameters c1 … ck (captured, unannotated) then [t]'s non-function parameters; the
+   body with each function parameter replaced by its lambda, β-reduced, and every
+   self-call `g … f … ā` rewritten to `name c1 … ck ā`. For `map (fun y -> S y)`:
+   `let rec map__0 (l:nlist) = match l with NNil -> NNil | NCons x r -> NCons (S x)
+   (map__0 r)`. No `val` (H5b). Raises [Specialize_error] for a self-call that changes
+   a function argument (rejection C2, `iter: the recursive call passes `fun y -> f (f
+   y)` for `f`, not `f` itself; specialization would not terminate`) or omits one. *)
+val clone_body : template -> key -> name:string -> Ast.letbindings

@@ -336,6 +336,99 @@ let rec app_assoc x y z = match x with | Nil -> () | Cons h t -> app_assoc t y z
 |} in
   check_bool "polymorphic first-order definitions: no template" (ts = []) (show ts)
 
+(* ===== H5a: clone_body ===== *)
+
+(* Templates and, for each, the clone a person would write (named `<template>__0`). *)
+let clone_src = {|
+module C
+type nat = | Z : nat | S : nat -> nat
+type nlist = | NNil : nlist | NCons : nat -> nlist -> nlist
+let rec le (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S a -> (match y with | Z -> false | S b -> le a b)
+
+let rec map (f:nat -> nat) (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> NCons (f x) (map f r)
+let rec map__0 (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> NCons (S x) (map__0 r)
+
+let rec filter (f:nat -> bool) (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> if f x then NCons x (filter f r) else filter f r
+let rec filter__0 c1 (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> if le c1 x then NCons x (filter__0 c1 r) else filter__0 c1 r
+
+let apply_at (d:nat) (f:nat -> nat) = f d
+let apply_at__0 (d:nat) = S d
+
+val find_or : f:(nat -> bool) -> d:nat -> l:nlist -> nat
+let rec find_or f d l = match l with
+  | NNil -> d
+  | NCons x r -> if f x then x else find_or f d r
+let rec find_or__0 c1 d l = match l with
+  | NNil -> d
+  | NCons x r -> if le c1 x then x else find_or__0 c1 d r
+
+let map_twice (f:nat -> nat) (l:nlist) = map f (map f l)
+let map_twice__0 (l:nlist) = map (fun y -> S y) (map (fun y -> S y) l)
+|}
+
+let () =
+  print_endline "clone_body:";
+  let parsed = Parse.parse_string clone_src in
+  let ts = Specialize.find_templates ~typed:(Infer.infer_module parsed) parsed in
+  let template n = List.find (fun t -> t.Specialize.t_name = n) ts in
+  let expected n = List.find_map (fun se -> match se.sig_el with
+    | Sig_let { lbs = [ lb ]; lb_rec } when lb.lb_name.vname = n -> Some (lb_rec, lb)
+    | _ -> None) parsed.mod_decls |> Option.get in
+  let y = fresh_var "y" and x = fresh_var "x" and vv = fresh_var "v" in
+  let succ_lam = lam y (app (fv "S") [ v y ]) and le_v = lam x (app (fv "le") [ v vv; v x ]) in
+  let clone n lams =
+    let k, _ = Specialize.key_of ~template:n lams in
+    Specialize.clone_body (template n) k ~name:(n ^ "__0") in
+  let check_clone label n lams =
+    let got = clone n lams in
+    let lb = List.hd got.lbs and erec, elb = expected (n ^ "__0") in
+    (* the hand-written clone refers to itself by its own binder; rename it to ours *)
+    let want = Subst.subst_term [ (elb.lb_name, Tm_var lb.lb_name) ] elb.lb_def in
+    check label lb.lb_def want;
+    check_bool (label ^ ": rec flag") (got.lb_rec = erec)
+      (Printf.sprintf "rec = %b, want %b" got.lb_rec erec) in
+
+  check_clone "map at fun y -> S y (self-call rewritten)" "map" [ succ_lam ];
+  check_clone "filter at fun x -> le v x (captured v first)" "filter" [ le_v ];
+  check_clone "apply_at at fun y -> S y (function parameter second, not rec)" "apply_at" [ succ_lam ];
+  check_clone "find_or (val-typed, unannotated) at fun x -> le v x" "find_or" [ le_v ];
+  check_clone "map_twice: a call of another template stays (H6 specializes it)" "map_twice" [ succ_lam ];
+
+  (* two clones of one template share no binder *)
+  let p c = match (List.hd c.lbs).lb_def with Tm_abs a -> a.xbinder | _ -> fresh_var "?" in
+  let c1 = clone "map" [ succ_lam ] and c2 = clone "map" [ lam y (v y) ] in
+  check_bool "two clones of map: distinct parameter binders" (not (var_eq (p c1) (p c2)))
+    "both bind the same l";
+
+  (* rejection C2, with the message of tests/hof_reject_changing.cst *)
+  let iter_src = {|
+module I
+type nat = | Z : nat | S : nat -> nat
+let rec iter (f:nat -> nat) (n:nat) (x:nat) = match n with
+  | Z -> x
+  | S m -> iter (fun y -> f (f y)) m x
+|} in
+  let ip = Parse.parse_string iter_src in
+  let it = List.hd (Specialize.find_templates ~typed:(Infer.infer_module ip) ip) in
+  let k, _ = Specialize.key_of ~template:"iter" [ succ_lam ] in
+  let want = "iter: the recursive call passes `fun y -> f (f y)` for `f`, not `f` itself; \
+              specialization would not terminate" in
+  (match Specialize.clone_body it k ~name:"iter__0" with
+   | _ -> check_bool "C2: a self-call changing f" false "accepted"
+   | exception Specialize.Specialize_error msg ->
+     check_bool "C2: a self-call changing f" (msg = want)
+       (Printf.sprintf "message: %s\n        want:    %s" msg want))
+
 let () =
   if !failures > 0 then begin
     Printf.printf "%d failure(s)\n" !failures;
