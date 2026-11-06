@@ -309,6 +309,77 @@ let record_pattern (fs : (string * (scope -> pat * scope) option) list) (sc : sc
       (sc, []) (List.init n Fun.id)
   in
   (P_cons (lid_of_str ("Mk" ^ rname), List.rev rpats), sc')
+
+(* A record pattern as a parameter, F*'s `let f {a; b = x; c = _} = e`: the parameter
+   is a fresh variable `s` of the record type, and each field the pattern names is a
+   variable that the body's field projection replaces, `a` ↦ `a s`, `x` ↦ `b s`. A
+   substitution, not a `match`, so the body keeps its shape: a quantified predicate
+   (`let inv {msgs} = forall n. …`) stays a plain formula. Sub-patterns other than a
+   variable or `_` would need a match and are rejected. Returns the binder and the
+   substitution the body needs. *)
+let record_param (fs : (string * (scope -> pat * scope) option) list) (sc : scope)
+    : var * typ option * scope * (var * term) list =
+  let rname, n, slots = field_slots "record parameter" fs in
+  let sv = fresh_var "s" in
+  let proj i = mk_app (Tm_fvar (lid_of_str (field_at rname i))) [ Tm_var sv ] in
+  let sc', subst =
+    List.fold_left
+      (fun (s, acc) i ->
+        match slots.(i) with
+        | None -> (s, acc)
+        | Some None ->
+          let f = field_at rname i in
+          let v = fresh_var f in
+          (bind_tm s f v, (v, proj i) :: acc)
+        | Some (Some pf) ->
+          (match pf s with
+           | P_var v, s' -> (s', (v, proj i) :: acc)
+           | P_wild _, s' -> (s', acc)
+           | _ ->
+             failwith
+               (Printf.sprintf
+                  "record parameter: field %s must bind a variable or _" (field_at rname i))))
+      (sc, []) (List.init n Fun.id)
+  in
+  (sv, Some (mk_base (B_app (lid_of_str rname, []))), sc', subst)
+
+(* After a record parameter's substitution a match on one of its fields has an
+   application as scrutinee (`match seen with` became `match seen s with`); bind it to
+   a variable again, as the parser does for a written one, since the equation generator
+   matches only on variables. *)
+let rec rebind_scruts (t : term) : term =
+  match t with
+  | Tm_match (s, brs) ->
+    let brs =
+      List.map
+        (fun br -> { br with br_when = Option.map rebind_scruts br.br_when;
+                             br_body = rebind_scruts br.br_body })
+        brs
+    in
+    bind_scrut (rebind_scruts s) (fun s' -> Tm_match (s', brs))
+  | Tm_app (f, a) -> Tm_app (rebind_scruts f, rebind_scruts a)
+  | Tm_abs a -> Tm_abs { a with xbody = rebind_scruts a.xbody }
+  | Tm_let (lbs, b) ->
+    Tm_let ({ lbs with lbs = List.map (fun lb -> { lb with lb_def = rebind_scruts lb.lb_def }) lbs.lbs },
+            rebind_scruts b)
+  | Tm_quant q -> Tm_quant { q with qbody = rebind_scruts q.qbody }
+  | Tm_ascribed (e, ty) -> Tm_ascribed (rebind_scruts e, ty)
+  | Tm_var _ | Tm_fvar _ | Tm_const _ -> t
+
+(* `let f p1 .. pn = e` with ordinary and record parameters: the lambdas as build_abs
+   makes them, and the record parameters' substitutions applied to the body. A body with
+   no record parameter is returned exactly as build_abs would. *)
+let build_abs_params params body sc =
+  let rec go ps sc substs =
+    match ps with
+    | [] ->
+      let b = body sc in
+      if substs = [] then b else rebind_scruts (Subst.subst_term substs b)
+    | p :: rest ->
+      let (v, tyo, sc', s) = p sc in
+      Tm_abs { xbinder = v; xtyp = tyo; xbody = go rest sc' (substs @ s) }
+  in
+  go params sc []
 %}
 
 /* ===== Tokens ===== */
@@ -555,11 +626,21 @@ binder:
       { fun sc -> let v = fresh_var x in (v, None, bind_tm sc x v) }
 
 letbinding:
-  | name=IDENT params=list(binder) ty=letAnnot EQUALS e=term
+  | name=IDENT params=list(param) ty=letAnnot EQUALS e=term
       { (* `let f p1 .. pn = e`  desugars the params to `fun p1 .. pn -> e`.
            A type annotation is only kept for the param-less form in v1. *)
         let s_typ = match params with [] -> ty | _ -> None in
-        { s_name = name; s_typ; s_def = (fun sc -> build_abs params e sc) } }
+        { s_name = name; s_typ; s_def = (fun sc -> build_abs_params params e sc) } }
+
+/* a let parameter: an ordinary binder, or a record pattern `{a; b = x}` (also
+   parenthesized, as F* writes `let f ({a; b}) = …`) */
+param:
+  | b=binder
+      { fun sc -> let (v, t, sc') = b sc in (v, t, sc', []) }
+  | LBRACE fs=recordPatFields RBRACE
+      { fun sc -> record_param fs sc }
+  | LPAREN LBRACE fs=recordPatFields RBRACE RPAREN
+      { fun sc -> record_param fs sc }
 
 letAnnot:
   | /* empty */    { None }
