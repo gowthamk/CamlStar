@@ -5,7 +5,7 @@ module HofCapture
    (`v`, `w`), so they share one clone `filter__k c l` with the captured value as its
    first parameter. `filter_ge2`'s goal and the postcondition of its call to
    `filter_ge` therefore name the same clone application, which is what closes it.
-   Today the file dies in axiom generation. The false goals are tests/hof_bad.cst. *)
+   Run by strip_and_reprove.sh (3/3). The false goals are tests/hof_bad.cst. *)
 
 type nat =
   | Z : nat

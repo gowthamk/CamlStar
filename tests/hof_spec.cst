@@ -7,9 +7,9 @@ module HofSpec
    instance of the spec and a caller can use it. The callers here bind the call
    (`let r = … in`), which uses the spec through ordinary typing. Every arm of
    `find_or` returns a variable, not a nullary constructor (a refined arm returning a
-   nullary constructor needs refined-rec-defs, not on this branch). Today the checker
-   stops at the first lambda passed to the refined template (`check error: cannot
-   synthesize a function; annotation required`). The false goals are tests/hof_bad.cst. *)
+   nullary constructor needs refined-rec-defs, not on this branch). Run by
+   strip_and_reprove.sh (8/8: each of the two clones is checked against its own `val`).
+   The false goals are tests/hof_bad.cst. *)
 
 type nat =
   | Z : nat

@@ -4,7 +4,7 @@ module HofLocal
    argument, the shape of F*'s `let is_my_vote m = … in L.find is_my_vote s.msgs`:
    `ge` is let-bound inside `first_ge` and captures its parameter `v`. Specialization
    inlines the local function into the call, then clones `find` at
-   `fun x -> le c x`. Today the file dies in axiom generation. The false goals are
+   `fun x -> le c x`. Run by strip_and_reprove.sh (3/3). The false goals are
    tests/hof_bad.cst. *)
 
 type nat =

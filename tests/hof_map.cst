@@ -4,9 +4,8 @@ module HofMap
    parameter, called with lambdas and with a definition name. Each distinct lambda gives
    one first-order clone of `map`; the definition name `succ` is eta-expanded to
    `fun x -> succ x`. The second lambda's body is a match, so beta-reduction puts a match
-   inside a constructor argument (lift-match lifts it). Today the file dies in axiom
-   generation with `axioms: higher-order field/return not supported`. The false goals
-   over the same programs are tests/hof_bad.cst. *)
+   inside a constructor argument (lift-match lifts it). Run by strip_and_reprove.sh
+   (7/7). The false goals over the same programs are tests/hof_bad.cst. *)
 
 type nat =
   | Z : nat

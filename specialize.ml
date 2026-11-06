@@ -238,11 +238,14 @@ let clone_body (t : template) (k : key) ~(name : string) : letbindings =
 
 (* ===== H5b: the clone's `val` ===== *)
 
-(* β-reduce every refinement formula in a type ([beta] does not enter types). *)
-let rec beta_typ (ty : typ) : typ =
+(* Apply [g] to every refinement formula of a type. *)
+let rec map_typ_terms (g : term -> term) (ty : typ) : typ =
   match ty with
-  | T_refine r -> T_refine { r with rphi = beta r.rphi }
-  | T_arrow a -> T_arrow { a with adom = beta_typ a.adom; acod = beta_typ a.acod }
+  | T_refine r -> T_refine { r with rphi = g r.rphi }
+  | T_arrow a -> T_arrow { a with adom = map_typ_terms g a.adom; acod = map_typ_terms g a.acod }
+
+(* β-reduce every refinement formula in a type ([beta] does not enter types). *)
+let beta_typ (ty : typ) : typ = map_typ_terms beta ty
 
 (* The template's `val` at key [k]: each function binder dropped and its lambda (opened
    at the `val`'s own fresh c1 … ck) substituted in the rest of the type, every
@@ -300,6 +303,118 @@ let call_site (t : template) (args : term list) : key * term list =
   let rest = List.filteri (fun i _ -> not (List.mem_assoc i t.t_funs)) args in
   (k, List.map (fun c -> Tm_var c) cs @ rest)
 
+(* ===== H6: the module rewrite ===== *)
+
+(* A lemma's result is `unit` refined by its postcondition (the parser's `Lemma` sugar). *)
+let rec is_lemma_typ (ty : typ) : bool =
+  match ty with
+  | T_arrow a -> is_lemma_typ a.acod
+  | T_refine { rbase = B_unit; _ } -> true
+  | T_refine _ -> false
+
+(* More clones than this means a template keeps producing new keys (templates passing
+   each other growing lambdas, which C2 cannot see across definitions). *)
+let max_clones = 200
+
+(* Every declaration is first cleaned (local function lets inlined, β-reduced), then
+   every template call in it (bodies, hints, `val` refinements, `assume` formulas) is
+   replaced by a call of the clone of its key, made on first use. A clone's own body is
+   rewritten the same way, so a template calling another template ends up first-order
+   (a worklist, by recursion). A clone is placed just before the first declaration that
+   calls it, clones it needs before it: inference wants every name defined before use,
+   and a lambda may mention names defined after the template (OneShotLeader's `find`
+   is defined before `is_my_vote`'s helpers). Templates and their `val`s are dropped.
+   Under option (A), a clone gets the template's `val` instantiated (H5b) and the
+   checker checks it like any definition; the captured parameters' types come from one
+   inference of the rewritten module (a captured pattern variable has a type nowhere
+   else). A lemma over a function would be dropped with the templates, unchecked, so it
+   is rejected. With no template the result is the cleaned module. *)
 let specialize_module ~(typed : modul) (parsed : modul) : modul =
-  ignore typed;
-  parsed
+  let err fmt = Printf.ksprintf (fun s -> raise (Specialize_error s)) fmt in
+  let ts = find_templates ~typed parsed in
+  List.iter (fun t ->
+    if is_lemma_typ t.t_scheme.ts_typ then
+      err "%s: a lemma over a function (parameter %s) is outside the fragment; state it \
+           at a concrete function, or at an `assume val` symbol" t.t_name
+        (match peel_abs t.t_lb.lb_def with
+         | ps, _ -> (List.nth ps (fst (List.hd t.t_funs))).xbinder.vname))
+    ts;
+  let is_template n = List.exists (fun t -> t.t_name = n) ts in
+  let clones : (key * string) list ref = ref [] in      (* key -> clone name *)
+  let made : (template * key * letbindings) list ref = ref [] in
+  let pending : letbindings list ref = ref [] in        (* to place before the current declaration *)
+  let counts = Hashtbl.create 8 in
+  let clean e = beta (inline_local_lambdas e) in
+  let rec rw e =
+    match e with
+    | Tm_app _ ->
+      (match template_call ts e with
+       | Some (t, args) ->
+         let k, cargs = call_site t (List.map rw args) in
+         let name = match List.find_opt (fun (k', _) -> key_equal k k') !clones with
+           | Some (_, n) -> n
+           | None -> make_clone t k in
+         mk_app (Tm_fvar (lid_of_str name)) cargs
+       | None -> let h, args = spine e in mk_app (rw h) (List.map rw args))
+    | _ -> map_subterms rw e
+  and make_clone t k =
+    if List.length !clones >= max_clones then
+      err "%s: more than %d clones; a template keeps being called at new functions"
+        t.t_name max_clones;
+    let n = Option.value ~default:0 (Hashtbl.find_opt counts t.t_name) in
+    Hashtbl.replace counts t.t_name (n + 1);
+    let name = Printf.sprintf "%s__%d" t.t_name n in
+    clones := (k, name) :: !clones;
+    let lbs = clone_body t k ~name in
+    let lbs = { lbs with lbs = List.map (fun lb -> { lb with lb_def = rw (clean lb.lb_def) }) lbs.lbs } in
+    made := (t, k, lbs) :: !made;
+    pending := !pending @ [ lbs ];                      (* after the clones its body needed *)
+    name
+  in
+  let rewrite (se : sigelt) : sigelt =
+    let el = match se.sig_el with
+      | Sig_let lbs ->
+        Sig_let { lbs with lbs = List.map (fun lb -> { lb with lb_def = rw (clean lb.lb_def) }) lbs.lbs }
+      | Sig_val (l, sch) -> Sig_val (l, { sch with ts_typ = map_typ_terms (fun e -> rw (clean e)) sch.ts_typ })
+      | Sig_assume (l, phi) -> Sig_assume (l, rw (clean phi))
+      | el -> el in
+    { se with sig_el = el } in
+  let decls = List.concat_map (fun se ->
+    match se.sig_el with
+    | Sig_let lbs when List.exists (fun lb -> is_template lb.lb_name.vname) lbs.lbs ->
+      (match List.find_opt (fun lb -> not (is_template lb.lb_name.vname)) lbs.lbs with
+       | Some lb -> err "%s: defined in one `and` group with a template; define it separately"
+                      lb.lb_name.vname
+       | None -> [])
+    | Sig_val (l, _) when is_template l.bname -> []
+    | _ ->
+      let se' = rewrite se in
+      let cl = !pending in
+      pending := [];
+      List.map (fun lbs -> { se with sig_el = Sig_let lbs; sig_quals = []; sig_attrs = [] }) cl
+      @ [ se' ]) parsed.mod_decls in
+  let m1 = { parsed with mod_decls = decls } in
+  (* the clones' `val`s, (A): captured parameters' types read off one inference *)
+  let with_val = List.filter (fun (t, _, _) -> t.t_val <> None) !made in
+  if with_val = [] then m1
+  else begin
+    let typed1 = Infer.infer_module m1 in
+    let param_types = Hashtbl.create 8 in
+    List.iter (fun se -> match se.sig_el with
+      | Sig_let { lbs = [ lb ]; _ } -> Hashtbl.replace param_types lb.lb_name.vid lb.lb_def
+      | _ -> ()) typed1.mod_decls;
+    let vals = List.filter_map (fun (t, k, lbs) ->
+      let lb = List.hd lbs.lbs in
+      let ps, _ = peel_abs (Hashtbl.find param_types lb.lb_name.vid) in
+      let ctypes = List.filteri (fun i _ -> i < k.k_ncaptured) ps
+                   |> List.map (fun a -> match a.xtyp with
+                       | Some ty -> ty
+                       | None -> err "%s: no type inferred for a captured variable" lb.lb_name.vname) in
+      Option.map (fun sch -> (lb.lb_name.vid, (lb.lb_name.vname, sch))) (clone_val t k ~ctypes))
+      with_val in
+    { m1 with mod_decls = List.concat_map (fun se -> match se.sig_el with
+        | Sig_let { lbs = [ lb ]; _ } when List.mem_assoc lb.lb_name.vid vals ->
+          let name, sch = List.assoc lb.lb_name.vid vals in
+          [ { se with sig_el = Sig_val (lid_of_str name, sch) }; se ]
+        | _ -> [ se ]) m1.mod_decls }
+  end

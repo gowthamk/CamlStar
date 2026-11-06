@@ -4,10 +4,8 @@ module HofBad
    same templates and lambdas as tests/hof_map.cst, hof_capture.cst, hof_local.cst and
    hof_spec.cst. Expected after specialization: the four lemmas fail (saturated), none
    unknown or an error; the clone of `find_or` verifies against its own spec (3 VCs),
-   so 3 verified, 4 failed, 7 VCs (measured on the hand-specialized equivalent). Not
-   run by strip_and_reprove.sh. Today the checker stops at the lambda passed to the
-   refined `find_or` (`check error: cannot synthesize a function; annotation
-   required`). *)
+   so 3 verified, 4 failed, 7 VCs (measured, and equal to the hand-specialized
+   equivalent). Not run by strip_and_reprove.sh. *)
 
 type nat =
   | Z : nat

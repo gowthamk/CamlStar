@@ -5,8 +5,8 @@ module HofUninterp
    `assume val p` is eta-expanded to `fun x -> p x`, with no captured variable. Two
    templates are specialized at it: `filter` (value-returning) and `all` (a
    higher-order predicate, whose clone is a predicate). Proving the lemma for the
-   uninterpreted `p` proves it for every predicate. Today the file dies in axiom
-   generation. The false goals are tests/hof_bad.cst. *)
+   uninterpreted `p` proves it for every predicate. Run by strip_and_reprove.sh (2/2).
+   The false goals are tests/hof_bad.cst. *)
 
 type nat =
   | Z : nat

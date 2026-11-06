@@ -14,7 +14,18 @@
    variables distinct from the `val`'s, so re-inferring an inferred module fails with
    `let annotation mismatch: 'a vs 'a` (tests/prop_list_append.cst).
 
-   Currently the identity (plan step H2). *)
+   The pass: every declaration is cleaned ([inline_local_lambdas], [beta]); every
+   template call in a body, a hint, a `val` refinement or an `assume` is replaced by a
+   call of the clone of its key, made on first use ([call_site], [clone_body]) and itself
+   rewritten, so templates calling templates end first-order; each clone is placed just
+   before the first declaration calling it (inference wants names defined before use);
+   templates and their `val`s are dropped. A template with a `val` gives each clone the
+   instantiated `val` ([clone_val]; option (A): the checker checks each clone against
+   it), with the captured parameters' types read off one extra inference of the
+   rewritten module. Raises [Specialize_error] for the rejections, including a lemma
+   over a function (dropping it with the templates would leave it unchecked) and a
+   template sharing an `and` group with a non-template. With no template, the result is
+   the cleaned module. *)
 
 val specialize_module : typed:Ast.modul -> Ast.modul -> Ast.modul
 
