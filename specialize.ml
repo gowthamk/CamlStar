@@ -121,9 +121,11 @@ let key_equal (a : key) (b : key) : bool =
 
 (* A top-level definition with at least one parameter of function type. [t_lb] is the
    parsed binding (the clone is copied from it), [t_funs] the positions of its function
-   parameters (0-based) with their types, [t_scheme] its type from [typed]. *)
+   parameters (0-based) with their types, [t_scheme] its type from [typed], [t_val]
+   the user's `val` from [parsed], refinements included (inference erases a `val` to
+   its shape, so [t_scheme] has none). *)
 type template = { t_name : string; t_lb : letbinding; t_funs : (int * typ) list;
-                  t_scheme : tscheme }
+                  t_scheme : tscheme; t_val : tscheme option }
 
 (* The function-typed parameters of a type: the domains of its arrows that are arrows. *)
 let fun_params (ty : typ) : (int * typ) list =
@@ -145,6 +147,8 @@ let find_templates ~(typed : modul) (parsed : modul) : template list =
       List.iter (fun lb -> Option.iter (Hashtbl.replace schemes lb.lb_name.vid) lb.lb_scheme)
         lbs.lbs
     | _ -> ()) typed.mod_decls;
+  let vals = List.filter_map (fun se -> match se.sig_el with
+    | Sig_val (l, sch) -> Some (l.bname, sch) | _ -> None) parsed.mod_decls in
   List.concat_map (fun se -> match se.sig_el with
     | Sig_let lbs ->
       List.filter_map (fun lb ->
@@ -162,7 +166,8 @@ let find_templates ~(typed : modul) (parsed : modul) : template list =
                   "%s: a polymorphic template (type variable '%s) cannot be specialized; \
                    write a monomorphic copy" lb.lb_name.vname tv.tvname))
               | [] ->
-                Some { t_name = lb.lb_name.vname; t_lb = lb; t_funs = funs; t_scheme = sch })))
+                Some { t_name = lb.lb_name.vname; t_lb = lb; t_funs = funs; t_scheme = sch;
+                       t_val = List.assoc_opt lb.lb_name.vname vals })))
         lbs.lbs
     | _ -> []) parsed.mod_decls
 
@@ -230,6 +235,42 @@ let clone_body (t : template) (k : key) ~(name : string) : letbindings =
   let is_rec = List.exists (var_eq clone_v) (Subst.free_vars_term def) in
   { lb_rec = is_rec;
     lbs = [ { lb_name = clone_v; lb_scheme = None; lb_def = def; lb_measure = None } ] }
+
+(* ===== H5b: the clone's `val` ===== *)
+
+(* β-reduce every refinement formula in a type ([beta] does not enter types). *)
+let rec beta_typ (ty : typ) : typ =
+  match ty with
+  | T_refine r -> T_refine { r with rphi = beta r.rphi }
+  | T_arrow a -> T_arrow { a with adom = beta_typ a.adom; acod = beta_typ a.acod }
+
+(* The template's `val` at key [k]: each function binder dropped and its lambda (opened
+   at the `val`'s own fresh c1 … ck) substituted in the rest of the type, every
+   refinement β-reduced, and arrows `cj : ctypes_j` put first. The binder names of a
+   `val` are its own (they need not be the definition's parameter names), and arrow
+   position i is parameter position i, as in [t_funs]. [ctypes] are the captured
+   variables' types; they are an input because the parsed tree does not have them and
+   the typed tree has them only for some binders (a pattern variable gets none), so
+   the caller reads them off the clone's inferred parameters. None when the template
+   has no `val`. *)
+let clone_val (t : template) (k : key) ~(ctypes : typ list) : tscheme option =
+  match t.t_val with
+  | None -> None
+  | Some sch ->
+    let cs = List.mapi (fun i _ -> fresh_var (Printf.sprintf "c%d" (i + 1))) ctypes in
+    let lams = List.map (fun l -> beta (mk_app l (List.map (fun c -> Tm_var c) cs))) k.k_lams in
+    let fun_lam = List.combine (List.map fst t.t_funs) lams in
+    let rec drop i ty =
+      match ty with
+      | T_arrow a ->
+        (match List.assoc_opt i fun_lam with
+         | Some lam -> drop (i + 1) (Subst.subst_typ [ (a.abinder, lam) ] a.acod)
+         | None -> T_arrow { a with acod = drop (i + 1) a.acod })
+      | T_refine _ -> ty in
+    let body = beta_typ (drop 0 sch.ts_typ) in
+    let ty = List.fold_right2 (fun c cty acc -> T_arrow { abinder = c; adom = cty; acod = acc })
+        cs ctypes body in
+    Some { ts_vars = []; ts_typ = ty }
 
 let specialize_module ~(typed : modul) (parsed : modul) : modul =
   ignore typed;

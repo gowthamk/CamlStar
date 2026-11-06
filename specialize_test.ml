@@ -429,6 +429,73 @@ let rec iter (f:nat -> nat) (n:nat) (x:nat) = match n with
      check_bool "C2: a self-call changing f" (msg = want)
        (Printf.sprintf "message: %s\n        want:    %s" msg want))
 
+(* ===== H5b: clone_val ===== *)
+
+let () =
+  print_endline "clone_val:";
+  let prelude = {|
+type nat = | Z : nat | S : nat -> nat
+type nlist = | NNil : nlist | NCons : nat -> nlist -> nlist
+let rec le (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S a -> (match y with | Z -> false | S b -> le a b)
+let rec len (l:nlist) = match l with | NNil -> Z | NCons x r -> S (len r)
+|} in
+  let parsed = Parse.parse_string ("module V\n" ^ prelude ^ {|
+val find_or : f:(nat -> bool) -> d:nat -> l:nlist -> r:nat{f r \/ r = d}
+let rec find_or f d l = match l with
+  | NNil -> d
+  | NCons x r -> if f x then x else find_or f d r
+val map : f:(nat -> nat) -> l:nlist -> r:nlist{len r = len l}
+let rec map f l = match l with
+  | NNil -> NNil
+  | NCons x r -> NCons (f x) (map f r)
+val apply_at : d:nat -> f:(nat -> nat) -> r:nat{r = f d}
+let apply_at d f = f d
+val guard : f:(nat -> bool) -> x:nat{f x} -> nat
+let guard f x = x
+let rec filter (f:nat -> bool) (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> if f x then NCons x (filter f r) else filter f r
+|}) in
+  (* what a person would write for each clone (parsed only) *)
+  let expected = Parse.parse_string ("module E\n" ^ prelude ^ {|
+val find_or__0 : c1:nat -> d:nat -> l:nlist -> r:nat{le c1 r \/ r = d}
+val map__0 : l:nlist -> r:nlist{len r = len l}
+val apply_at__0 : d:nat -> r:nat{r = S d}
+val guard__0 : c1:nat -> x:nat{le c1 x} -> nat
+val map__wrong : l:nlist -> r:nlist{len r = S (len l)}
+|}) in
+  let ts = Specialize.find_templates ~typed:(Infer.infer_module parsed) parsed in
+  let template n = List.find (fun t -> t.Specialize.t_name = n) ts in
+  let want n = List.find_map (fun se -> match se.sig_el with
+    | Sig_val (l, sch) when l.bname = n -> Some sch.ts_typ | _ -> None) expected.mod_decls
+    |> Option.get in
+  let nat = mk_base (B_app (lid_of_str "nat", [])) in
+  let y = fresh_var "y" and x = fresh_var "x" and vv = fresh_var "v" in
+  let succ_lam = lam y (app (fv "S") [ v y ]) and le_v = lam x (app (fv "le") [ v vv; v x ]) in
+  let cv n lam ctypes =
+    let k, _ = Specialize.key_of ~template:n [ lam ] in
+    Specialize.clone_val (template n) k ~ctypes in
+  let check_val label n lam ctypes =
+    match cv n lam ctypes with
+    | Some sch ->
+      check_bool label (Subst.alpha_equal_typ sch.ts_typ (want (n ^ "__0")))
+        (Printf.sprintf "got  %s\n        want %s" (string_of_typ sch.ts_typ)
+           (string_of_typ (want (n ^ "__0"))))
+    | None -> check_bool label false "no val" in
+  check_val "find_or at fun x -> le v x (f in the result's refinement, c1 first)"
+    "find_or" le_v [ nat ];
+  check_val "map at fun y -> S y (f not mentioned)" "map" succ_lam [];
+  check_val "apply_at at fun y -> S y (f second, beta in the refinement)" "apply_at" succ_lam [];
+  check_val "guard at fun x -> le v x (f in a later parameter's refinement)" "guard" le_v [ nat ];
+  check_bool "no user val: none" (cv "filter" le_v [ nat ] = None) "a val was made";
+  (* the comparison sees refinements: same shape, wrong formula, no match *)
+  check_bool "a wrong refinement does not match"
+    (match cv "map" succ_lam [] with
+     | Some sch -> not (Subst.alpha_equal_typ sch.ts_typ (want "map__wrong"))
+     | None -> false) "matched map__wrong"
+
 let () =
   if !failures > 0 then begin
     Printf.printf "%d failure(s)\n" !failures;

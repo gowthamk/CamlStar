@@ -67,9 +67,10 @@ val key_equal : key -> key -> bool
 
 (* A template: a top-level definition with a function parameter. [t_lb] is the parsed
    binding, [t_funs] the 0-based positions of its function parameters with their types
-   (`map (f:nat -> nat) l` ⇒ [(0, nat -> nat)]), [t_scheme] its type from [typed]. *)
+   (`map (f:nat -> nat) l` ⇒ [(0, nat -> nat)]), [t_scheme] its type from [typed]
+   (shape only), [t_val] the user's `val` from [parsed] with its refinements. *)
 type template = { t_name : string; t_lb : Ast.letbinding; t_funs : (int * Ast.typ) list;
-                  t_scheme : Ast.tscheme }
+                  t_scheme : Ast.tscheme; t_val : Ast.tscheme option }
 
 (* [find_templates ~typed parsed]: the templates among [parsed]'s top-level `let`s, in
    order, with types read from [typed] (the user's `val`, else the inferred scheme, so
@@ -89,3 +90,13 @@ val find_templates : typed:Ast.modul -> Ast.modul -> template list
    a function argument (rejection C2, `iter: the recursive call passes `fun y -> f (f
    y)` for `f`, not `f` itself; specialization would not terminate`) or omits one. *)
 val clone_body : template -> key -> name:string -> Ast.letbindings
+
+(* [clone_val t k ~ctypes]: the clone's `val`, from the template's: function binders
+   dropped, their lambdas substituted into the remaining types and refinements and
+   β-reduced, captured binders `cj : ctypes_j` first. `val find_or : f:(nat -> bool) ->
+   d:nat -> l:nlist -> r:nat{f r \/ r = d}` at `fun x -> le v x`, ctypes [nat] ⇒
+   `c1:nat -> d:nat -> l:nlist -> r:nat{le c1 r \/ r = d}`. [ctypes] (one per captured
+   variable, in the key's order) are an input: a captured pattern variable has no type
+   in either tree, so the caller reads them off the clone's inferred parameters. None
+   when the template has no `val`. *)
+val clone_val : template -> key -> ctypes:Ast.typ list -> Ast.tscheme option
