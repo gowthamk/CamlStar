@@ -213,6 +213,37 @@ let constant_sigs (m : modul) : (string * base_typ) list =
          | _ -> acc)
        [] m.mod_decls)
 
+(* The right-hand side of every arity-0 `let` built only from applications and
+   constants (`let init = KCons A (KCons B KNil)`). Its definitional equation guards
+   each inner application on a value that nothing asserts exists, so the equation never
+   fires; the right-hand side is ground, so asserting those values (as `instantiate!`
+   would) is sound, and build_query treats these terms as hints in every query; CEGQI
+   takes them as the constants' shapes. A definition with a `match` or `let` is left
+   out (its equation is guarded, not ground), and so is a unit constant
+   (`let ok = assert …`), which carries no information. *)
+let constant_defs (m : modul) : (string * term) list =
+  let rec ground_app (t : term) : bool =
+    match t with
+    | Tm_fvar _ | Tm_const _ -> true
+    | Tm_app (f, a) -> ground_app f && ground_app a
+    | Tm_ascribed (e, _) -> ground_app e
+    | _ -> false
+  in
+  List.concat_map
+    (fun se ->
+      match se.sig_el with
+      | Sig_let { lb_rec = false; lbs } ->
+        List.filter_map
+          (fun lb ->
+            match lb.lb_scheme with
+            | Some { ts_typ = T_refine { rbase; _ }; _ }
+              when rbase <> B_unit && ground_app lb.lb_def ->
+              Some (lb.lb_name.vname, lb.lb_def)
+            | _ -> None)
+          lbs
+      | _ -> [])
+    m.mod_decls
+
 (* source names of functions that already return bool: these are encoded as SMT
    *predicates* [f : args -> Bool] under their own name, not relationally abstracted
    into [f_rel(args, result)] (a bool result column would be redundant — the function

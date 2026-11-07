@@ -20,7 +20,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 pass=0; fail=0
-for f in tests/prop*.cst tests/const_defs.cst .claude/skills/caml-star-instantiate/Examples/prop*.cst; do
+for f in tests/prop*.cst tests/const_defs.cst tests/const_witness.cst .claude/skills/caml-star-instantiate/Examples/prop*.cst; do
   [ -e "$f" ] || continue
   base=$(basename "$f")
   # drop the hint but keep the `in` body: `let _ = instantiate!(e) in REST` -> `REST`
