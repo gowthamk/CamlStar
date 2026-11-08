@@ -144,4 +144,7 @@ let () =
        exit 1
      | Check.Check_error msg ->
        Printf.eprintf "check error: %s\n" msg;
+       exit 1
+     | Axioms.Quantified_def_error msg ->
+       Printf.eprintf "error: %s\n" msg;
        exit 1)

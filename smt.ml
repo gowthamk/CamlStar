@@ -222,6 +222,16 @@ let solver_calls () = !calls
    [fuel] is simultaneously the depth and round bound: it is what stops an unbounded
    S(a), S(S(a)), ... tower from a non-structurally-recursive definition, which cannot be
    detected in general. *)
+(* A quantified definition (Axioms.quantified_defs) has no equation and no declaration:
+   prepare_vc unfolds it in everything the VC states, once, before the first round, so
+   the ledger, Skolemization, CEGQI and the countermodel all see the same formula. Hints
+   are left alone: a quantified name is a predicate, not a witness, and Anf.hoist on an
+   application of it only materialises the application's own abstract arguments. *)
+let prepare_vc (m : modul) (vc : Vc.t) : Vc.t =
+  let e = Inline.expand m in
+  { vc with Vc.hyps = List.map e vc.Vc.hyps; goal = e vc.Vc.goal;
+            axioms = List.map e vc.Vc.axioms }
+
 let solve_module ?dump_dir ?(cegqi = true) ?(fuel = 3) ?(trace = false)
     ?(timeout_ms = 10000) (m : modul) (vcs : Vc.t list) : (Vc.t * verdict) list =
   let ret_sort = make_ret_sort m in
@@ -268,5 +278,5 @@ let solve_module ?dump_dir ?(cegqi = true) ?(fuel = 3) ?(trace = false)
               go (round + 1) { vc with Vc.instantiations = vc.Vc.instantiations @ cands }
             end
       in
-      go 0 vc0)
+      go 0 (prepare_vc m vc0))
     vcs
