@@ -222,16 +222,62 @@ let solver_calls () = !calls
    [fuel] is simultaneously the depth and round bound: it is what stops an unbounded
    S(a), S(S(a)), ... tower from a non-structurally-recursive definition, which cannot be
    detected in general. *)
+(* A quantified definition (Axioms.quantified_defs) has no equation and no declaration:
+   prepare_vc unfolds it in everything the VC states, once, before the first round, so
+   the ledger, Skolemization, CEGQI and the countermodel all see the same formula. Hints
+   are left alone: a quantified name is a predicate, not a witness, and Anf.hoist on an
+   application of it only materialises the application's own abstract arguments.
+
+   After unfolding, the goal may start with what a lemma signature would have declared:
+   peel a leading `P ==> Q` into a hypothesis `P` and goal `Q` (deduction), a leading
+   `forall y. Q` into a scope constant `y` and goal `Q` (∀-introduction), and split a
+   leading `A /\ B` into one VC per conjunct. Each step is an inference rule, so a
+   verdict on the peeled VCs is a verdict on the original. What it buys: the goal's
+   applications become ground, so `ground_lets` materialises their witnesses and
+   `Cegqi.candidates` sees them, which it never does under a quantifier. An `exists`
+   at the top stays: it needs a witness, not a constant. *)
+let rec peel_goal (vc : Vc.t) : Vc.t list =
+  match spine vc.Vc.goal [] with
+  | Tm_fvar l, [ p; q ] when l.bname = "l_imp" ->
+    peel_goal { vc with Vc.hyps = vc.Vc.hyps @ [ p ]; goal = q }
+  | Tm_fvar l, [ a; b ] when l.bname = "l_and" ->
+    peel_goal { vc with Vc.goal = a } @ peel_goal { vc with Vc.goal = b }
+  | Tm_quant { qk = Forall; qv; qty = Some (T_refine { rbase; _ }); qbody }, [] ->
+    peel_goal { vc with Vc.scope = vc.Vc.scope @ [ (qv, rbase) ]; goal = qbody }
+  | _ -> [ vc ]
+
+(* Peel on the written form first, so a hypothesis moved from the goal keeps its written
+   shape; then unfold, recording (written, unfolded) for every hypothesis the unfolding
+   changed; then peel what the unfolding exposed. The report prints the written forms. *)
+let prepare_vc (m : modul) (vc : Vc.t) : Vc.t list =
+  let written_goal = vc.Vc.goal in
+  let e = Inline.expand m in
+  List.concat_map
+    (fun vc ->
+      let pairs = ref [] in
+      let unf t = let t' = e t in if t' <> t then pairs := (t, t') :: !pairs; t' in
+      let hyps = List.map unf vc.Vc.hyps in
+      let goal = unf vc.Vc.goal in
+      let axioms = List.map e vc.Vc.axioms in
+      List.map
+        (fun p ->
+          { p with Vc.goal_as_written =
+                     (if p.Vc.goal = written_goal then None else Some written_goal) })
+        (peel_goal { vc with Vc.hyps; goal; axioms;
+                             as_written = vc.Vc.as_written @ List.rev !pairs }))
+    (peel_goal vc)
+
 let solve_module ?dump_dir ?(cegqi = true) ?(fuel = 3) ?(trace = false)
     ?(timeout_ms = 10000) (m : modul) (vcs : Vc.t list) : (Vc.t * verdict) list =
   let ret_sort = make_ret_sort m in
   calls := 0;
-  List.mapi
-    (fun i vc0 ->
+  List.concat_map
+    (fun (i, k, nparts, vc0) ->
       let dump round query =
         match dump_dir with
         | Some dir ->
-          let base = Printf.sprintf "%s/%s_%d" dir (sanitize_file vc0.Vc.reason) (i + 1) in
+          let part = if nparts > 1 then Printf.sprintf "_p%d" (k + 1) else "" in
+          let base = Printf.sprintf "%s/%s_%d%s" dir (sanitize_file vc0.Vc.reason) (i + 1) part in
           let fn = if round = 0 then base ^ ".smt2"
                    else Printf.sprintf "%s_r%d.smt2" base round in
           let oc = open_out fn in output_string oc query; close_out oc
@@ -268,5 +314,11 @@ let solve_module ?dump_dir ?(cegqi = true) ?(fuel = 3) ?(trace = false)
               go (round + 1) { vc with Vc.instantiations = vc.Vc.instantiations @ cands }
             end
       in
-      go 0 vc0)
-    vcs
+      [ go 0 vc0 ])
+    (List.concat
+       (List.mapi
+          (fun i vc ->
+            let parts = prepare_vc m vc in
+            let n = List.length parts in
+            List.mapi (fun k p -> (i, k, n, p)) parts)
+          vcs))

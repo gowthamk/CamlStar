@@ -190,20 +190,27 @@ let collect_apps (ts : term list) : term list =
     let s = Ast.string_of_term tm in
     if not (Hashtbl.mem seen s) then (Hashtbl.add seen s (); acc := tm :: !acc)
   in
-  let rec go t =
+  (* [bound]: the quantifier variables in scope. An application that mentions one is not
+     a witness the query materialises, and its printed form can coincide with a ground
+     application's (`Leader n` under `forall n` against the lemma's own `n`), which
+     would hide the ground one from the dedup check. Its ground subterms still count. *)
+  let rec go bound t =
     match t with
     | Tm_app _ ->
       let head, args = head_spine t [] in
-      List.iter go args;
-      (match head with
-       | Tm_fvar l when not (is_interpreted l.bname) -> add t
-       | Tm_var _ -> add t                         (* recursive/other function reference *)
-       | _ -> ())
-    | Tm_quant q -> go q.qbody
-    | Tm_ascribed (e, _) -> go e
+      List.iter (go bound) args;
+      let mentions_bound =
+        bound <> [] && List.exists (fun v -> List.mem v.vid bound) (Subst.free_vars_term t) in
+      if not mentions_bound then
+        (match head with
+         | Tm_fvar l when not (is_interpreted l.bname) -> add t
+         | Tm_var _ -> add t                         (* recursive/other function reference *)
+         | _ -> ())
+    | Tm_quant q -> go (q.qv.vid :: bound) q.qbody
+    | Tm_ascribed (e, _) -> go bound e
     | _ -> ()
   in
-  List.iter go ts; List.rev !acc
+  List.iter (go []) ts; List.rev !acc
 
 (* Every applied term the query already materialises as a witness — the goal, the
    hypotheses (incl. constructor discriminators), and the instantiate! hints — as one

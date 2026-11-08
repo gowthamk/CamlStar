@@ -161,6 +161,82 @@ let datatype_axioms (m : modul) : term list =
 
 (* ===== functions ===== *)
 
+(* Definitions whose body is a quantified formula — `let inv s = forall n. …`, the shape
+   of a protocol invariant — or applies one, or that carry the `logic` qualifier. They
+   get no equation (an equation would put the quantifier in argument position) and no
+   declaration: they are unfolded at their uses in specs and proofs instead (Inline).
+   Non-recursive lets only; a definition can only apply ones above it, so one pass in
+   file order is the transitive closure. *)
+let rec term_exists (p : term -> bool) (t : term) : bool =
+  p t
+  ||
+  match t with
+  | Tm_var _ | Tm_fvar _ | Tm_const _ -> false
+  | Tm_abs { xbody; _ } -> term_exists p xbody
+  | Tm_app (f, a) -> term_exists p f || term_exists p a
+  | Tm_let (lbs, body) ->
+    List.exists (fun lb -> term_exists p lb.lb_def) lbs.lbs || term_exists p body
+  | Tm_match (s, brs) ->
+    term_exists p s
+    || List.exists (fun br ->
+           term_exists p br.br_body
+           || (match br.br_when with Some w -> term_exists p w | None -> false)) brs
+  | Tm_ascribed (e, _) -> term_exists p e
+  | Tm_quant { qbody; _ } -> term_exists p qbody
+
+(* the body, after its parameters, is a formula: connectives and quantifiers over atoms,
+   with applications of [qdefs] only as atoms — never under a match, let or if, and never
+   inside another application's arguments, where unfolding would put a quantifier in
+   value position *)
+let formula_shaped (qdefs : string list) (body : term) : bool =
+  let rec strip = function Tm_abs { xbody; _ } -> strip xbody | e -> e in
+  let rec spine t acc = match t with Tm_app (f, a) -> spine f (a :: acc) | _ -> (t, acc) in
+  let applies_qdef t =
+    term_exists (function Tm_fvar l -> List.mem l.bname qdefs | _ -> false) t in
+  let rec ok t =
+    match t with
+    | Tm_var _ | Tm_const _ | Tm_fvar _ -> true
+    | Tm_quant { qbody; _ } -> ok qbody
+    | Tm_app _ ->
+      (match spine t [] with
+       | Tm_fvar l, args when Smtlib.is_connective l.bname -> List.for_all ok args
+       | Tm_fvar l, args when List.mem l.bname qdefs -> not (List.exists applies_qdef args)
+       | _, args -> not (List.exists applies_qdef args))
+    | Tm_abs _ | Tm_let _ | Tm_match _ | Tm_ascribed _ -> false
+  in
+  ok (strip body)
+
+let quantified_defs (m : modul) : string list =
+  let rec result_base = function
+    | T_arrow { acod; _ } -> result_base acod
+    | T_refine { rbase; _ } -> rbase
+  in
+  List.rev
+    (List.fold_left
+       (fun acc se ->
+         match se.sig_el with
+         | Sig_let lbs when not lbs.lb_rec ->
+           let logic = List.mem Q_logic se.sig_quals in
+           let quantified t =
+             term_exists
+               (function Tm_quant _ -> true | Tm_fvar l -> List.mem l.bname acc | _ -> false)
+               t
+           in
+           let returns_bool lb =
+             match lb.lb_scheme with
+             | Some sch -> result_base sch.ts_typ = B_bool
+             | None -> false
+           in
+           List.fold_left
+             (fun acc lb ->
+               if returns_bool lb && (logic || quantified lb.lb_def)
+                  && formula_shaped acc lb.lb_def
+               then lb.lb_name.vname :: acc
+               else acc)
+             acc lbs.lbs
+         | _ -> acc)
+       [] m.mod_decls)
+
 (* (name, (arg sorts, result sort)) for every user function, val taking precedence
    over its definition, deduped by name *)
 let function_sigs (m : modul) : (string * (base_typ list * base_typ)) list =
@@ -194,6 +270,7 @@ let bool_fn_names (m : modul) : string list =
   List.filter_map (fun (n, (_, out)) -> if out = B_bool then Some n else None) (function_sigs m)
 
 let function_decls (m : modul) : string list =
+  let qdefs = quantified_defs m in
   List.map
     (fun (name, (ins, out)) ->
       if out = B_bool then
@@ -206,7 +283,7 @@ let function_decls (m : modul) : string list =
         Printf.sprintf "(declare-fun %s (%s) Bool)"
           (Smtlib.sanitize (rel_name name))
           (String.concat " " (List.map Smtlib.sort_of_base (ins @ [ out ]))))
-    (function_sigs m)
+    (List.filter (fun (name, _) -> not (List.mem name qdefs)) (function_sigs m))
 
 (* Functionality is only needed for the *relations* (an SMT predicate is already a
    function of its arguments), so bool functions are skipped here. *)
@@ -358,7 +435,41 @@ let gen_equations (fname : string) (params : (var * base_typ) list)
   in
   walk (List.map (fun (p, _) -> (p.vid, Tm_var p)) params) params [] body
 
+(* A quantified definition is unfolded only where a formula is expected — lemma
+   statements, requires/ensures, refinements, assumed axioms, proof bodies. Applying one
+   inside a function body would put a quantifier into that function's equation, and a
+   recursive one cannot be unfolded at all; both are reported, not crashed on. *)
+exception Quantified_def_error of string
+
+let check_quantified_defs (m : modul) : unit =
+  let qdefs = quantified_defs m in
+  let applies_qdef t =
+    term_exists (function Tm_fvar l -> List.mem l.bname qdefs | _ -> false) t in
+  List.iter
+    (fun se ->
+      match se.sig_el with
+      | Sig_let lbs ->
+        List.iter
+          (fun lb ->
+            let name = lb.lb_name.vname in
+            let has_quant = term_exists (function Tm_quant _ -> true | _ -> false) lb.lb_def in
+            if lbs.lb_rec && (has_quant || applies_qdef lb.lb_def) then
+              raise (Quantified_def_error
+                       (Printf.sprintf "%s is recursive and its body is a quantified formula; \
+                                        a quantified predicate cannot be recursive" name))
+            else if not (List.mem name qdefs) && (has_quant || applies_qdef lb.lb_def) then
+              raise (Quantified_def_error
+                       (Printf.sprintf "%s uses a quantified formula in its body; a quantified \
+                                        predicate must return bool and be a plain formula \
+                                        (no match, let or if around the quantifier), and it \
+                                        is unfolded only in specs and proofs, not in a \
+                                        function body" name)))
+          lbs.lbs
+      | _ -> ())
+    m.mod_decls
+
 let definitional_equations (m : modul) : defeq list =
+  check_quantified_defs m;
   let vals = val_map m in
   let fields = ctor_fields_table m in
   let field_sorts cname =
@@ -371,6 +482,7 @@ let definitional_equations (m : modul) : defeq list =
     (inductives m);
   let ctors_of tname =
     match Hashtbl.find_opt ctors tname with Some cs -> cs | None -> [] in
+  let qdefs = quantified_defs m in
   List.concat_map
     (fun se ->
       match se.sig_el with
@@ -378,6 +490,7 @@ let definitional_equations (m : modul) : defeq list =
         List.concat_map
           (fun lb ->
             let name = lb.lb_name.vname in
+            if List.mem name qdefs then [] else
             let declared =
               match Hashtbl.find_opt vals name with
               | Some sch -> sch.ts_typ

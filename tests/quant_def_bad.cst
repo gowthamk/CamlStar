@@ -1,0 +1,39 @@
+module QuantDefBad
+
+(* Negative control for tests/quant_def.cst: three false goals over the same quantified
+   definitions. Expected: 3 failed, 0 verified, none of them unknown or an error. Not
+   run by strip_and_reprove.sh. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+let rec mem (x:nat) (l:nlist) = match l with
+  | NNil -> false
+  | NCons y r -> if x = y then true else mem x r
+
+let rec le (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S a -> (match y with
+            | Z -> false
+            | S b -> le a b)
+
+let all_z (l:nlist) = forall (y:nat). mem y l ==> y = Z
+
+let lower (x:nat) (l:nlist) = forall (y:nat). mem y l ==> le x y
+
+(* false: consing a successor breaks all_z *)
+val all_z_bad : l:nlist -> Lemma(ensures all_z l ==> all_z (NCons (S Z) l))
+let all_z_bad l = ()
+
+(* false: the premise does not say anything about S x *)
+val lower_bad : x:nat -> l:nlist -> Lemma(ensures lower x l ==> lower (S x) l)
+let lower_bad x l = ()
+
+(* false: a singleton of a successor is not all zero *)
+val all_z_one_bad : u:nat -> Lemma(ensures all_z (NCons (S Z) NNil))
+let all_z_one_bad u = ()

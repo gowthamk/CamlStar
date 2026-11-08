@@ -38,9 +38,23 @@ let print_context (ctors : string list) (vc : Vc.t) : unit =
    | [] -> ()
    | ds -> Printf.printf "  • Branch: %s\n" (String.concat " / " ds));
   Printf.printf "  • Hypotheses:\n";
-  match vc.Vc.hyps with
-  | [] -> Printf.printf "    (none)\n"
-  | hs -> List.iter (fun h -> Printf.printf "    %s\n" (Ast.string_of_term h)) hs
+  (match vc.Vc.hyps with
+   | [] -> Printf.printf "    (none)\n"
+   | hs ->
+     List.iter
+       (fun h ->
+         (* a hypothesis that solving unfolded: its written form, then the unfolding *)
+         match List.find_opt (fun (_, u) -> u = h) vc.Vc.as_written with
+         | Some (w, _) ->
+           Printf.printf "    %s\n      ≡ %s\n" (Ast.string_of_term w) (Ast.string_of_term h)
+         | None -> Printf.printf "    %s\n" (Ast.string_of_term h))
+       hs);
+  (* the goal, when solving peeled or unfolded it into something other than the ensures *)
+  match vc.Vc.goal_as_written with
+  | Some w ->
+    Printf.printf "  • Goal: %s\n      (from %s)\n" (Ast.string_of_term vc.Vc.goal)
+      (Ast.string_of_term w)
+  | None -> ()
 
 let print_ledger (vc : Vc.t) : unit =
   Printf.printf "  • Instantiated terms:\n";
@@ -125,7 +139,7 @@ let () =
              end)
            results;
          Printf.printf "%d verified, %d failed, %d unknown, %d errors (of %d VCs); %d solver call(s)\n"
-           !verified !failed !unknown !errored (List.length vcs) (Smt.solver_calls ());
+           !verified !failed !unknown !errored (List.length results) (Smt.solver_calls ());
          if !failed > 0 || !unknown > 0 then
            print_endline
              "note: unverified VCs may be spurious \
@@ -144,4 +158,7 @@ let () =
        exit 1
      | Check.Check_error msg ->
        Printf.eprintf "check error: %s\n" msg;
+       exit 1
+     | Axioms.Quantified_def_error msg ->
+       Printf.eprintf "error: %s\n" msg;
        exit 1)
