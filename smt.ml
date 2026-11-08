@@ -226,22 +226,46 @@ let solver_calls () = !calls
    prepare_vc unfolds it in everything the VC states, once, before the first round, so
    the ledger, Skolemization, CEGQI and the countermodel all see the same formula. Hints
    are left alone: a quantified name is a predicate, not a witness, and Anf.hoist on an
-   application of it only materialises the application's own abstract arguments. *)
-let prepare_vc (m : modul) (vc : Vc.t) : Vc.t =
+   application of it only materialises the application's own abstract arguments.
+
+   After unfolding, the goal may start with what a lemma signature would have declared:
+   peel a leading `P ==> Q` into a hypothesis `P` and goal `Q` (deduction), a leading
+   `forall y. Q` into a scope constant `y` and goal `Q` (∀-introduction), and split a
+   leading `A /\ B` into one VC per conjunct. Each step is an inference rule, so a
+   verdict on the peeled VCs is a verdict on the original. What it buys: the goal's
+   applications become ground, so `ground_lets` materialises their witnesses and
+   `Cegqi.candidates` sees them, which it never does under a quantifier. An `exists`
+   at the top stays: it needs a witness, not a constant. *)
+let rec peel_goal (vc : Vc.t) : Vc.t list =
+  match spine vc.Vc.goal [] with
+  | Tm_fvar l, [ p; q ] when l.bname = "l_imp" ->
+    peel_goal { vc with Vc.hyps = vc.Vc.hyps @ [ p ]; goal = q }
+  | Tm_fvar l, [ a; b ] when l.bname = "l_and" ->
+    peel_goal { vc with Vc.goal = a } @ peel_goal { vc with Vc.goal = b }
+  | Tm_quant { qk = Forall; qv; qty = Some (T_refine { rbase; _ }); qbody }, [] ->
+    peel_goal { vc with Vc.scope = vc.Vc.scope @ [ (qv, rbase) ]; goal = qbody }
+  | _ -> [ vc ]
+
+(* Peel on the written form first, then unfold, then peel what the unfolding exposed. *)
+let prepare_vc (m : modul) (vc : Vc.t) : Vc.t list =
   let e = Inline.expand m in
-  { vc with Vc.hyps = List.map e vc.Vc.hyps; goal = e vc.Vc.goal;
-            axioms = List.map e vc.Vc.axioms }
+  List.concat_map
+    (fun vc ->
+      peel_goal { vc with Vc.hyps = List.map e vc.Vc.hyps; goal = e vc.Vc.goal;
+                          axioms = List.map e vc.Vc.axioms })
+    (peel_goal vc)
 
 let solve_module ?dump_dir ?(cegqi = true) ?(fuel = 3) ?(trace = false)
     ?(timeout_ms = 10000) (m : modul) (vcs : Vc.t list) : (Vc.t * verdict) list =
   let ret_sort = make_ret_sort m in
   calls := 0;
-  List.mapi
-    (fun i vc0 ->
+  List.concat_map
+    (fun (i, k, nparts, vc0) ->
       let dump round query =
         match dump_dir with
         | Some dir ->
-          let base = Printf.sprintf "%s/%s_%d" dir (sanitize_file vc0.Vc.reason) (i + 1) in
+          let part = if nparts > 1 then Printf.sprintf "_p%d" (k + 1) else "" in
+          let base = Printf.sprintf "%s/%s_%d%s" dir (sanitize_file vc0.Vc.reason) (i + 1) part in
           let fn = if round = 0 then base ^ ".smt2"
                    else Printf.sprintf "%s_r%d.smt2" base round in
           let oc = open_out fn in output_string oc query; close_out oc
@@ -278,5 +302,11 @@ let solve_module ?dump_dir ?(cegqi = true) ?(fuel = 3) ?(trace = false)
               go (round + 1) { vc with Vc.instantiations = vc.Vc.instantiations @ cands }
             end
       in
-      go 0 (prepare_vc m vc0))
-    vcs
+      [ go 0 vc0 ])
+    (List.concat
+       (List.mapi
+          (fun i vc ->
+            let parts = prepare_vc m vc in
+            let n = List.length parts in
+            List.mapi (fun k p -> (i, k, n, p)) parts)
+          vcs))

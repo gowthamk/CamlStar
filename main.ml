@@ -125,7 +125,7 @@ let () =
              end)
            results;
          Printf.printf "%d verified, %d failed, %d unknown, %d errors (of %d VCs); %d solver call(s)\n"
-           !verified !failed !unknown !errored (List.length vcs) (Smt.solver_calls ());
+           !verified !failed !unknown !errored (List.length results) (Smt.solver_calls ());
          if !failed > 0 || !unknown > 0 then
            print_endline
              "note: unverified VCs may be spurious \
