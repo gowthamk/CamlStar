@@ -246,13 +246,25 @@ let rec peel_goal (vc : Vc.t) : Vc.t list =
     peel_goal { vc with Vc.scope = vc.Vc.scope @ [ (qv, rbase) ]; goal = qbody }
   | _ -> [ vc ]
 
-(* Peel on the written form first, then unfold, then peel what the unfolding exposed. *)
+(* Peel on the written form first, so a hypothesis moved from the goal keeps its written
+   shape; then unfold, recording (written, unfolded) for every hypothesis the unfolding
+   changed; then peel what the unfolding exposed. The report prints the written forms. *)
 let prepare_vc (m : modul) (vc : Vc.t) : Vc.t list =
+  let written_goal = vc.Vc.goal in
   let e = Inline.expand m in
   List.concat_map
     (fun vc ->
-      peel_goal { vc with Vc.hyps = List.map e vc.Vc.hyps; goal = e vc.Vc.goal;
-                          axioms = List.map e vc.Vc.axioms })
+      let pairs = ref [] in
+      let unf t = let t' = e t in if t' <> t then pairs := (t, t') :: !pairs; t' in
+      let hyps = List.map unf vc.Vc.hyps in
+      let goal = unf vc.Vc.goal in
+      let axioms = List.map e vc.Vc.axioms in
+      List.map
+        (fun p ->
+          { p with Vc.goal_as_written =
+                     (if p.Vc.goal = written_goal then None else Some written_goal) })
+        (peel_goal { vc with Vc.hyps; goal; axioms;
+                             as_written = vc.Vc.as_written @ List.rev !pairs }))
     (peel_goal vc)
 
 let solve_module ?dump_dir ?(cegqi = true) ?(fuel = 3) ?(trace = false)
