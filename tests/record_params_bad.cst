@@ -1,0 +1,37 @@
+module RecordParamsBad
+
+(* Negative control for tests/record_params.cst: three false goals over the same
+   definitions, one per form (punned with a match, renamed, `_` beside an ordinary
+   parameter). Expected: 3 failed, 0 verified, none of them unknown or an error. Not
+   run by strip_and_reprove.sh. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+type state = { count : nat; seen : nlist }
+
+let total {count; seen} = match seen with
+  | NNil -> count
+  | NCons x r -> S count
+
+let bump ({count = c}) = S c
+
+let same_count {count; seen = _} (t:state) = count = t.count
+
+(* false: the cons arm adds one *)
+val total_cons_bad : c:nat -> x:nat -> r:nlist ->
+  Lemma(ensures total { count = c; seen = NCons x r } = c)
+let total_cons_bad c x r = ()
+
+(* false: bump adds one *)
+val bump_bad : s:state -> Lemma(ensures bump s = s.count)
+let bump_bad s = ()
+
+(* false: different counts *)
+val same_bad : l:nlist -> Lemma(ensures same_count { count = Z; seen = l } { count = S Z; seen = l })
+let same_bad l = ()
