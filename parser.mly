@@ -28,6 +28,25 @@ let resolve_tm sc name =
   match List.assoc_opt name sc.tm with
   | Some v -> Tm_var v
   | None   -> Tm_fvar (lid_of_str name)     (* free name ⇒ top-level symbol *)
+
+(* Or-pattern `| p1 | p2 -> e`: elaborate every alternative from the branch's outer
+   scope and return them all; the caller builds one branch per alternative, with the
+   guard and body elaborated once in each alternative's own scope. As in F*, the
+   alternatives must bind the same names. *)
+let or_alternatives sc (alts : (scope -> 'a * scope) list) : ('a * scope) list =
+  let bound sc' =
+    List.sort compare
+      (List.filteri (fun i _ -> i < List.length sc'.tm - List.length sc.tm)
+         (List.map fst sc'.tm))
+  in
+  let rs = List.map (fun f -> f sc) alts in
+  (match rs with
+   | (_, s0) :: rest ->
+     List.iter (fun (_, s) -> if bound s <> bound s0 then
+                  failwith "or-pattern: every alternative must bind the same variables")
+       rest
+   | [] -> ());
+  rs
 let get_tyvar sc name =
   match Hashtbl.find_opt sc.ty name with
   | Some tv -> tv
@@ -185,6 +204,17 @@ let desugar_match (scruts : term list) (rows : mrow list) : term =
   List.iter (fun r -> if List.length r.r_pats <> n then
                 failwith "match: a branch has the wrong number of patterns") rows;
   desugar_rows scruts rows
+
+(* A single-scrutinee match with a nested constructor pattern goes through the same
+   pattern-matrix compiler as a multi-scrutinee one; a flat match is left as it is. *)
+let single_match (e : term) (brs : branch list) : term =
+  let nested = function
+    | P_cons (_, qs) -> List.exists (function P_cons _ | P_const _ -> true | _ -> false) qs
+    | _ -> false in
+  if List.exists (fun b -> nested b.br_pat) brs then
+    desugar_rows [ e ] (List.map (fun b ->
+      { r_pats = [ b.br_pat ]; r_when = b.br_when; r_body = b.br_body }) brs)
+  else Tm_match (e, brs)
 
 (* Build a (possibly recursive, possibly mutual) let group. `outer` is the scope
    outside the let; returns (letbindings, scope-for-body). *)
@@ -603,7 +633,7 @@ term:
   | IF c=term THEN a=term ELSE b=term
       { fun sc -> mk_if (c sc) (a sc) (b sc) }
   | MATCH e=term WITH bs=branches
-      { fun sc -> bind_scrut (e sc) (fun e -> Tm_match (e, bs sc)) }
+      { fun sc -> bind_scrut (e sc) (fun e -> single_match e (bs sc)) }
   | MATCH e=term COMMA es=separated_nonempty_list(COMMA, term) WITH bs=multibranches
       { fun sc -> bind_scruts (List.map (fun f -> f sc) (e :: es))
                     (fun scruts -> desugar_match scruts (bs sc)) }
@@ -624,6 +654,9 @@ binder:
       { fun sc -> let v = fresh_var x in (v, Some (t sc), bind_tm sc x v) }
   | x=IDENT
       { fun sc -> let v = fresh_var x in (v, None, bind_tm sc x v) }
+  | LPAREN RPAREN
+      { (* F*'s unit parameter, `let l () = …` for `val l : unit -> Lemma(…)` *)
+        fun sc -> (fresh_var "_", Some t_unit, sc) }
 
 letbinding:
   | name=IDENT params=list(param) ty=letAnnot EQUALS e=term
@@ -647,34 +680,42 @@ letAnnot:
   | COLON t=typ    { Some t }
 
 branches:
-  | b=branch %prec LOW_BRANCH { fun sc -> [ b sc ] }
-  | b=branch bs=branches      { fun sc -> b sc :: bs sc }
+  | b=branch %prec LOW_BRANCH { fun sc -> b sc }
+  | b=branch bs=branches      { fun sc -> b sc @ bs sc }
 
+/* A branch is one or more `|`-separated alternatives (or-pattern) sharing a guard
+   and body; it yields one Ast branch per alternative. */
 branch:
-  | BAR p=pattern g=option(preceded(WHEN, term)) ARROW e=term
+  | BAR ps=separated_nonempty_list(BAR, pattern) g=option(preceded(WHEN, term)) ARROW e=term
       { fun sc ->
-          let (pat, sc') = p sc in
-          { br_pat = pat;
-            br_when = (match g with Some w -> Some (w sc') | None -> None);
-            br_body = e sc' } }
+          List.map (fun (pat, sc') ->
+              { br_pat = pat;
+                br_when = (match g with Some w -> Some (w sc') | None -> None);
+                br_body = e sc' })
+            (or_alternatives sc ps) }
 
 /* Multi-scrutinee branches: a comma-separated tuple of patterns (≥2). Scope is
    threaded left-to-right through the patterns, then the guard/body see them all. */
 multibranches:
-  | b=multibranch %prec LOW_BRANCH { fun sc -> [ b sc ] }
-  | b=multibranch bs=multibranches { fun sc -> b sc :: bs sc }
+  | b=multibranch %prec LOW_BRANCH { fun sc -> b sc }
+  | b=multibranch bs=multibranches { fun sc -> b sc @ bs sc }
 
+/* As `branch`: `|`-separated alternatives, each a tuple of patterns, one row each. */
 multibranch:
-  | BAR p=pattern COMMA ps=separated_nonempty_list(COMMA, pattern)
+  | BAR rows=separated_nonempty_list(BAR, patternTuple)
         g=option(preceded(WHEN, term)) ARROW e=term
       { fun sc ->
-          let (pats, sc') =
-            List.fold_left (fun (acc, s) pf -> let (pp, s') = pf s in (acc @ [ pp ], s'))
-              ([], sc) (p :: ps)
-          in
-          { r_pats = pats;
-            r_when = (match g with Some w -> Some (w sc') | None -> None);
-            r_body = e sc' } }
+          List.map (fun (pats, sc') ->
+              { r_pats = pats;
+                r_when = (match g with Some w -> Some (w sc') | None -> None);
+                r_body = e sc' })
+            (or_alternatives sc rows) }
+
+patternTuple:
+  | p=pattern COMMA ps=separated_nonempty_list(COMMA, pattern)
+      { fun sc ->
+          List.fold_left (fun (acc, s) pf -> let (pp, s') = pf s in (acc @ [ pp ], s'))
+            ([], sc) (p :: ps) }
 
 tmIff:
   | l=tmImplies IFF r=tmIff  { fun sc -> mk_iff (l sc) (r sc) }

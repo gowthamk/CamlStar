@@ -1,0 +1,34 @@
+module ConstDefsBad
+
+(* Negative control for tests/const_defs.cst: three false goals over the same symbols.
+   Expected: 3 failed, 0 verified, none of them unknown or an error. Not run by
+   strip_and_reprove.sh. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type node =
+  | N : nat -> node
+
+assume val self : node
+assume val other : node
+assume val owner : node -> nat
+
+let two : nat = S (S Z)
+
+let rec add (x:nat) (y:nat) = match x with
+  | Z -> y
+  | S a -> S (add a y)
+
+(* false: two distinct assumed constants need not agree *)
+val owners_bad : u:nat -> Lemma(ensures owner self = owner other)
+let owners_bad u = ()
+
+(* false: two is S (S Z), so add two u is S (S u) *)
+val two_add_bad : u:nat -> Lemma(ensures add two u = S u)
+let two_add_bad u = ()
+
+(* false: two is not zero *)
+val two_bad : u:nat -> Lemma(ensures two = Z)
+let two_bad u = ()

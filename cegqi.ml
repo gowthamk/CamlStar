@@ -59,6 +59,11 @@ let shapes (m : modul) (vc : Vc.t) : (term * term) list =
           | _ -> ())
         (conjuncts h))
     vc.Vc.hyps;
+  (* a constant defined as a constructor term has that shape on every branch *)
+  List.iter
+    (fun (name, def) ->
+      if is_ctor_term ctors def then acc := add_shape !acc (Tm_fvar (lid_of_str name)) def)
+    (Axioms.constant_defs m);
   List.rev !acc
 
 (* Expand known shapes inside a term, so an equation's constructor patterns have something
