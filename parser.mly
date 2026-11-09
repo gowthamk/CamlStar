@@ -178,6 +178,17 @@ let desugar_match (scruts : term list) (rows : mrow list) : term =
                 failwith "match: a branch has the wrong number of patterns") rows;
   desugar_rows scruts rows
 
+(* A single-scrutinee match with a nested constructor pattern goes through the same
+   pattern-matrix compiler as a multi-scrutinee one; a flat match is left as it is. *)
+let single_match (e : term) (brs : branch list) : term =
+  let nested = function
+    | P_cons (_, qs) -> List.exists (function P_cons _ | P_const _ -> true | _ -> false) qs
+    | _ -> false in
+  if List.exists (fun b -> nested b.br_pat) brs then
+    desugar_rows [ e ] (List.map (fun b ->
+      { r_pats = [ b.br_pat ]; r_when = b.br_when; r_body = b.br_body }) brs)
+  else Tm_match (e, brs)
+
 (* Build a (possibly recursive, possibly mutual) let group. `outer` is the scope
    outside the let; returns (letbindings, scope-for-body). *)
 let build_lets is_rec (lbs : lb_syntax list) outer =
@@ -386,7 +397,7 @@ term:
   | IF c=term THEN a=term ELSE b=term
       { fun sc -> mk_if (c sc) (a sc) (b sc) }
   | MATCH e=term WITH bs=branches
-      { fun sc -> bind_scrut (e sc) (fun e -> Tm_match (e, bs sc)) }
+      { fun sc -> bind_scrut (e sc) (fun e -> single_match e (bs sc)) }
   | MATCH e=term COMMA es=separated_nonempty_list(COMMA, term) WITH bs=multibranches
       { fun sc -> bind_scruts (List.map (fun f -> f sc) (e :: es))
                     (fun scruts -> desugar_match scruts (bs sc)) }
