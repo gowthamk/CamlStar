@@ -1,0 +1,20 @@
+module HofRejectChanging
+
+(* Rejection test: a recursive call that changes the function argument. Specializing
+   `iter (fun y -> S y)` would need a clone for `fun y -> S (S y)`, then for
+   `fun y -> S (S (S (S y)))`, without end (rejection C2). Expected: a specialization
+   error showing the self-call's argument, and no VC. Run by tests/reject_hof.sh, which
+   checks the line below.
+EXPECT: iter: the recursive call passes `fun y -> f (f y)` for `f`, not `f` itself; specialization would not terminate
+*)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec iter (f:nat -> nat) (n:nat) (x:nat) = match n with
+  | Z -> x
+  | S m -> iter (fun y -> f (f y)) m x
+
+val iter_refl : n:nat -> Lemma(ensures iter (fun y -> S y) n Z = iter (fun y -> S y) n Z)
+let iter_refl n = ()

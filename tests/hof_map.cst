@@ -1,0 +1,49 @@
+module HofMap
+
+(* Regression test for higher-order specialization: a recursive template with a function
+   parameter, called with lambdas and with a definition name. Each distinct lambda gives
+   one first-order clone of `map`; the definition name `succ` is eta-expanded to
+   `fun x -> succ x`. The second lambda's body is a match, so beta-reduction puts a match
+   inside a constructor argument (lift-match lifts it). Run by strip_and_reprove.sh
+   (7/7). The false goals over the same programs are tests/hof_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+let rec len (l:nlist) = match l with
+  | NNil -> Z
+  | NCons x r -> S (len r)
+
+let rec map (f:nat -> nat) (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> NCons (f x) (map f r)
+
+let succ (x:nat) = S x
+
+(* a lambda *)
+val map_succ_len : xs:nlist -> Lemma(ensures len (map (fun x -> S x) xs) = len xs)
+let rec map_succ_len xs = match xs with
+  | NNil -> ()
+  | NCons x r -> map_succ_len r
+
+(* a lambda whose body is a match: the clone has one equation per arm of that match,
+   guarded by `x = Z` / `x = S y`, so the proof splits on `x`, as it would for the
+   hand-written first-order function *)
+val map_pred_len : xs:nlist ->
+  Lemma(ensures len (map (fun x -> match x with | Z -> Z | S y -> y) xs) = len xs)
+let rec map_pred_len xs = match xs with
+  | NNil -> ()
+  | NCons x r -> (match x with
+                  | Z -> map_pred_len r
+                  | S y -> map_pred_len r)
+
+(* a definition name, and a lambda with the same behaviour: two different clones *)
+val map_named : xs:nlist -> Lemma(ensures map succ xs = map (fun x -> S x) xs)
+let rec map_named xs = match xs with
+  | NNil -> ()
+  | NCons x r -> map_named r

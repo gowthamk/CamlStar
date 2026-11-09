@@ -1,0 +1,32 @@
+module HofUninterp
+
+(* Regression test for higher-order specialization with an uninterpreted predicate as
+   the function argument, the TIP pattern for a property about an arbitrary function:
+   `assume val p` is eta-expanded to `fun x -> p x`, with no captured variable. Two
+   templates are specialized at it: `filter` (value-returning) and `all` (a
+   higher-order predicate, whose clone is a predicate). Proving the lemma for the
+   uninterpreted `p` proves it for every predicate. Run by strip_and_reprove.sh (2/2).
+   The false goals are tests/hof_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+assume val p : nat -> bool
+
+let rec filter (q:nat -> bool) (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> if q x then NCons x (filter q r) else filter q r
+
+let rec all (q:nat -> bool) (l:nlist) = match l with
+  | NNil -> true
+  | NCons x r -> if q x then all q r else false
+
+val filter_all : xs:nlist -> Lemma(ensures all p (filter p xs) = true)
+let rec filter_all xs = match xs with
+  | NNil -> ()
+  | NCons x r -> filter_all r
