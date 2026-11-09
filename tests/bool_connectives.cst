@@ -1,0 +1,50 @@
+module BoolConnectives
+
+(* Regression test for F*'s boolean connectives `&&`, `||` and `not`. They lex to the
+   same tokens as `/\`, `\/` and `~`, so a definition or a lemma may use either
+   spelling. The false goals over the same definitions are
+   tests/bool_connectives_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let is_zero (x:nat) = match x with
+  | Z -> true
+  | S _ -> false
+
+let rec le (x:nat) (y:nat) = match x, y with
+  | Z, _ -> true
+  | S _, Z -> false
+  | S a, S b -> le a b
+
+(* `&&` and `not` inside a definition *)
+let lt (x:nat) (y:nat) = le x y && not (x = y)
+
+(* `||` inside a definition *)
+let le_or_zero (x:nat) (y:nat) = is_zero x || le x y
+
+(* `not` applied to an atom binds like `~`: `not a = b` is `(not a) = b` *)
+val not_zero_succ : x:nat -> Lemma(ensures not (is_zero (S x)))
+let not_zero_succ x = ()
+
+(* the two spellings are the same term *)
+val and_spellings : x:nat -> y:nat -> Lemma(ensures (le x y && le y x) <==> (le x y /\ le y x))
+let and_spellings x y = ()
+
+val or_spellings : x:nat -> y:nat -> Lemma(ensures (le x y || le y x) <==> (le x y \/ le y x))
+let or_spellings x y = ()
+
+val not_spellings : x:nat -> Lemma(ensures not (is_zero x) <==> ~(is_zero x))
+let not_spellings x = ()
+
+(* `&&`/`||` sit below comparison: `a = b && c = d` is `(a = b) && (c = d)` *)
+val lt_irrefl : x:nat -> Lemma(ensures not (lt x x))
+let lt_irrefl x = ()
+
+val le_or_zero_z : y:nat -> Lemma(ensures le_or_zero Z y)
+let le_or_zero_z y = ()
+
+(* `==>` and `||` under the same `ensures` *)
+val lt_implies_le : x:nat -> y:nat -> Lemma(ensures lt x y ==> le x y || x = y)
+let lt_implies_le x y = ()
