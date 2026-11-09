@@ -306,6 +306,63 @@ let rec peel_lams (n : int) (e : term) : var list * term =
 
 let is_true_term (t : term) : bool = match t with Tm_const (C_bool true) -> true | _ -> false
 
+(* A `match` (or the `let` an `if` desugars to) nested inside an application —
+   `b && (if c then x else y)`, `S (match l with …)`, `f (if …) x` — is lifted out of it:
+   C[let v = e in b] → let v = e in C[b] and C[match s with | p -> e] → match s with
+   | p -> C[e], repeated until every match sits at the top of the body or under a let,
+   which is what gen_equations handles. Applications are pure and total over their
+   arguments, so moving the strict context C into the arms changes nothing; the copy
+   of C per arm is the one-equation-per-leaf shape the generator produces anyway. A
+   quantifier is a scope boundary: inside its body applications are lifted to the
+   body's top, never through the binder. *)
+let rec lift_nested (t : term) : term =
+  let rec spine t acc = match t with Tm_app (f, a) -> spine f (a :: acc) | _ -> (t, acc) in
+  let rec replace i x = function
+    | [] -> []
+    | a :: rest -> if i = 0 then x :: rest else a :: replace (i - 1) x rest
+  in
+  match t with
+  | Tm_app _ ->
+    let head, args = spine t [] in
+    let args = List.map lift_nested args in
+    let rec first i = function
+      | [] -> None
+      | (Tm_let _ | Tm_match _) as a :: _ -> Some (i, a)
+      | _ :: rest -> first (i + 1) rest
+    in
+    (match first 0 args with
+     | None -> mk_app head args
+     | Some (i, Tm_let (lbs, body)) ->
+       Tm_let (lbs, lift_nested (mk_app head (replace i body args)))
+     | Some (i, Tm_match (s, brs)) ->
+       Tm_match
+         (s, List.map (fun br ->
+                 { br with br_body = lift_nested (mk_app head (replace i br.br_body args)) })
+               brs)
+     | Some _ -> mk_app head args)
+  | Tm_let ({ lb_rec = false; lbs = [ lb ] }, body) ->
+    (* a let whose definition is itself a match or let moves below it *)
+    (match lift_nested lb.lb_def with
+     | Tm_let (lbs', inner) ->
+       Tm_let (lbs', lift_nested (Tm_let ({ lb_rec = false; lbs = [ { lb with lb_def = inner } ] }, body)))
+     | Tm_match (s, brs) ->
+       Tm_match
+         (s, List.map (fun br ->
+                 { br with br_body =
+                             lift_nested
+                               (Tm_let ({ lb_rec = false; lbs = [ { lb with lb_def = br.br_body } ] }, body)) })
+               brs)
+     | def -> Tm_let ({ lb_rec = false; lbs = [ { lb with lb_def = def } ] }, lift_nested body))
+  | Tm_let (lbs, body) ->
+    Tm_let ({ lbs with lbs = List.map (fun lb -> { lb with lb_def = lift_nested lb.lb_def }) lbs.lbs },
+            lift_nested body)
+  | Tm_match (s, brs) ->
+    Tm_match (s, List.map (fun br -> { br with br_body = lift_nested br.br_body }) brs)
+  | Tm_abs a -> Tm_abs { a with xbody = lift_nested a.xbody }
+  | Tm_quant q -> Tm_quant { q with qbody = lift_nested q.qbody }
+  | Tm_ascribed (e, ty) -> Tm_ascribed (lift_nested e, ty)
+  | Tm_var _ | Tm_fvar _ | Tm_const _ -> t
+
 (* does the declared type carry any user refinement (a non-trivial predicate)? *)
 let rec has_refinement (t : typ) : bool =
   match t with
@@ -451,7 +508,8 @@ let definitional_equations (m : modul) : defeq list =
               (* a T_refine here is an arity-0 definition: no parameters, one equation *)
               let dom_bases = fun_doms declared in
               let vars, inner = peel_lams (List.length dom_bases) lb.lb_def in
-              (try gen_equations name (List.combine vars dom_bases) field_sorts ctors_of inner
+              (try gen_equations name (List.combine vars dom_bases) field_sorts ctors_of
+                     (lift_nested inner)
                with Invalid_argument _ -> [])
             | _ -> [])
           lbs.lbs
