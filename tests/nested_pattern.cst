@@ -1,0 +1,70 @@
+module NestedPattern
+
+(* Regression test: a single-scrutinee match with nested constructor patterns, compiled by
+   the parser's pattern-matrix compiler (single_match). Covers a definition, a default arm
+   beside a nested pattern, a three-level shape, and a proof body. A false goal over these
+   same definitions is tests/nested_pattern_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type agent =
+  | Alice : agent
+  | Bob : agent
+
+type list =
+  | Nil : list
+  | Cons : nat -> list -> list
+
+type msg =
+  | Agent : agent -> msg
+  | Nonce : nat -> msg
+  | Pair : msg -> msg -> msg
+
+let rec le (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S a -> (match y with
+            | Z -> false
+            | S b -> le a b)
+
+(* two levels, every case listed *)
+let rec sorted (l:list) = match l with
+  | Nil -> true
+  | Cons x Nil -> true
+  | Cons x (Cons y u) -> if le x y then sorted (Cons y u) else false
+
+(* a default arm beside a nested pattern *)
+let second (l:list) = match l with
+  | Cons x (Cons y u) -> y
+  | _ -> Z
+
+(* three levels, with a nullary constructor at the bottom *)
+let shape (n:nat) (m:msg) = match m with
+  | Pair (Nonce a) (Pair (Nonce x) (Agent Bob)) -> x = n
+  | _ -> false
+
+val sorted_one : x:nat -> Lemma(ensures sorted (Cons x Nil))
+let sorted_one x = ()
+
+val second_two : a:nat -> b:nat -> Lemma(ensures second (Cons a (Cons b Nil)) = b)
+let second_two a b = ()
+
+val second_one : a:nat -> Lemma(ensures second (Cons a Nil) = Z)
+let second_one a = ()
+
+val second_nil : u:nat -> Lemma(ensures second Nil = Z)
+let second_nil u = ()
+
+val shape_bob : a:nat -> n:nat -> Lemma(ensures shape n (Pair (Nonce a) (Pair (Nonce n) (Agent Bob))))
+let shape_bob a n = ()
+
+val shape_alice : a:nat -> n:nat -> Lemma(ensures shape n (Pair (Nonce a) (Pair (Nonce n) (Agent Alice))) = false)
+let shape_alice a n = ()
+
+(* a nested pattern in a proof body *)
+val sorted_tail : a:nat -> b:nat -> l:list -> Lemma(ensures sorted (Cons a (Cons b l)) ==> sorted (Cons b l))
+let sorted_tail a b l = match l with
+  | Nil -> ()
+  | Cons c Nil -> ()
+  | Cons c (Cons d u) -> ()
