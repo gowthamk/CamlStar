@@ -1,0 +1,52 @@
+module NestedPatternBad
+
+(* Negative control for tests/nested_pattern.cst: three false goals over nested patterns.
+   Expected: 3 failed, 0 verified, none of them unknown. Not run by strip_and_reprove.sh. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type agent =
+  | Alice : agent
+  | Bob : agent
+
+type list =
+  | Nil : list
+  | Cons : nat -> list -> list
+
+type msg =
+  | Agent : agent -> msg
+  | Nonce : nat -> msg
+  | Pair : msg -> msg -> msg
+
+let rec le (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S a -> (match y with
+            | Z -> false
+            | S b -> le a b)
+
+let rec sorted (l:list) = match l with
+  | Nil -> true
+  | Cons x Nil -> true
+  | Cons x (Cons y u) -> if le x y then sorted (Cons y u) else false
+
+let second (l:list) = match l with
+  | Cons x (Cons y u) -> y
+  | _ -> Z
+
+let shape (n:nat) (m:msg) = match m with
+  | Pair (Nonce a) (Pair (Nonce x) (Agent Bob)) -> x = n
+  | _ -> false
+
+(* false: S x is not below x *)
+val sorted_bad : x:nat -> Lemma(ensures sorted (Cons (S x) (Cons x Nil)))
+let sorted_bad x = ()
+
+(* false: the default arm returns Z *)
+val second_bad : a:nat -> Lemma(ensures second (Cons a Nil) = a)
+let second_bad a = ()
+
+(* false: the bottom constructor is Alice, so the default arm fires *)
+val shape_bad : a:nat -> n:nat -> Lemma(ensures shape n (Pair (Nonce a) (Pair (Nonce n) (Agent Alice))))
+let shape_bad a n = ()

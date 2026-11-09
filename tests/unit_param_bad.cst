@@ -1,0 +1,21 @@
+module UnitParamBad
+
+(* Negative control for tests/unit_param.cst: two false goals with unit parameters.
+   Expected: 2 failed, 0 verified, none of them unknown or an error. Not run by
+   strip_and_reprove.sh. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let rec add (x:nat) (y:nat) = match x with
+  | Z -> y
+  | S a -> S (add a y)
+
+(* false: add (S (S Z)) Z is S (S Z), not Z *)
+val add_two_bad : unit -> Lemma(ensures add (S (S Z)) Z = Z)
+let add_two_bad () = ()
+
+(* false: add Z x is x, not S x *)
+val add_z_bad : u:unit -> x:nat -> Lemma(ensures add Z x = S x)
+let add_z_bad () x = ()

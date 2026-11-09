@@ -1,0 +1,56 @@
+module ConstWitness
+
+(* Regression test for constants defined as constructor terms. The definitional
+   equation `init = KCons A (KCons B (KCons C KNil))` guards every inner application on
+   a value nothing asserted, so before the fix (Axioms.constant_defs, hoisted as hints in
+   every query) the equation never fired and every lemma below saturated. Covers a
+   constant used directly, a constant defined through another, a constant under a
+   recursive function, and a constant that applies a user function. The false goals over
+   the same definitions are tests/const_witness_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type ag =
+  | A : ag
+  | B : ag
+  | C : ag
+
+type kl =
+  | KNil : kl
+  | KCons : ag -> kl -> kl
+
+let rec kmem (x:ag) (k:kl) = match k with
+  | KNil -> false
+  | KCons y r -> if x = y then true else kmem x r
+
+let rec len (k:kl) = match k with
+  | KNil -> Z
+  | KCons y r -> S (len r)
+
+let single (a:ag) = KCons a KNil
+
+(* a constructor chain *)
+let init : kl = KCons A (KCons B (KCons C KNil))
+
+(* a constant defined through another *)
+let more : kl = KCons C init
+
+(* a constant that applies a user function *)
+let one : kl = single B
+
+val init_mem : u:nat -> Lemma(ensures kmem C init)
+let init_mem u = ()
+
+val init_len : u:nat -> Lemma(ensures len init = S (S (S Z)))
+let init_len u = ()
+
+val more_mem : u:nat -> Lemma(ensures kmem B more)
+let more_mem u = ()
+
+val more_len : u:nat -> Lemma(ensures len more = S (len init))
+let more_len u = ()
+
+val one_mem : u:nat -> Lemma(ensures kmem B one)
+let one_mem u = ()

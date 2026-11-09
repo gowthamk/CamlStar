@@ -1,0 +1,40 @@
+module ConstDefs
+
+(* Regression test for arity-0 symbols: an `assume val` constant and a `let` constant.
+   Before the fix (Axioms.constant_sigs, 2026-11-02) neither was declared in the query,
+   so any lemma mentioning one failed with `unknown constant`. The false goals over the
+   same definitions are tests/const_defs_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type node =
+  | N : nat -> node
+
+(* an assumed constant and an assumed function over it *)
+assume val self : node
+assume val owner : node -> nat
+
+(* a defined constant, with and without an annotation *)
+let two : nat = S (S Z)
+let three = S two
+
+let rec add (x:nat) (y:nat) = match x with
+  | Z -> y
+  | S a -> S (add a y)
+
+(* a constant inside a definition *)
+let is_two (x:nat) = x = two
+
+val self_owner : u:nat -> Lemma(ensures owner self = owner self)
+let self_owner u = ()
+
+val two_add : u:nat -> Lemma(ensures add Z two = two)
+let two_add u = ()
+
+val three_is : u:nat -> Lemma(ensures three = S (S (S Z)))
+let three_is u = ()
+
+val is_two_ok : u:nat -> Lemma(ensures is_two (S (S Z)))
+let is_two_ok u = ()
