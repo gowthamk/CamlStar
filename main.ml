@@ -5,6 +5,8 @@
    Runs the pipeline and prints a summary. Flags:
      --print-vcs   write FILE.vcs (the generated sequents) beside the source
      --solve       discharge each VC with z3 and report verified/failed/unknown
+     --failures-only  with --solve: print only the VCs that did not verify (the summary
+                   line still counts them all)
      --dump-smt D  write each VC's SMT-LIB2 query to D/<reason>_<i>.smt2
    Exits nonzero on a parse/type/check error, or (with --solve) if any VC is not
    verified. *)
@@ -51,6 +53,7 @@ let print_ledger (vc : Vc.t) : unit =
 let () =
   let print_vcs = ref false in
   let solve = ref false in
+  let failures_only = ref false in
   let dump_smt = ref None in
   let cegqi = ref true in
   let fuel = ref 3 in
@@ -63,6 +66,7 @@ let () =
     (match args.(!i) with
      | "--print-vcs" -> print_vcs := true
      | "--solve" -> solve := true
+     | "--failures-only" -> failures_only := true
      | "--dump-smt" -> incr i; if !i < Array.length args then dump_smt := Some args.(!i)
      | "--no-cegqi" -> cegqi := false
      | "--cegqi-trace" -> trace := true
@@ -75,7 +79,7 @@ let () =
   | None ->
     prerr_endline
       "usage: camlstar [--print-vcs] [--solve] [--dump-smt DIR] \
-       [--no-cegqi] [--fuel N] [--cegqi-trace] [--timeout MS] <file.cst>";
+       [--no-cegqi] [--fuel N] [--cegqi-trace] [--timeout MS] [--failures-only] <file.cst>";
     exit 2
   | Some fn ->
     (try
@@ -112,7 +116,8 @@ let () =
               | Smt.Fuel_exhausted _ -> incr unknown
               | Smt.Unknown -> incr unknown
               | Smt.Solver_error _ -> incr errored);
-             if !solve then begin
+             (* --failures-only: a large file's verified VCs bury the few that need reading *)
+             if !solve && not (!failures_only && v = Smt.Verified) then begin
                Printf.printf "  [VC#%s: %s] %s\n" (string_of_int @@ i+1)
                                   (Smt.string_of_verdict v) vc.Vc.reason;
                match v with
