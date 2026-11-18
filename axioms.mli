@@ -34,6 +34,11 @@ exception Quantified_def_error of string
    [f(args)] (a predicate) for bool-returning ones *)
 val function_decls : Ast.modul -> string list
 
+(* (name, right-hand side) of non-unit arity-0 definitions built only from applications
+   and constants: ground terms whose applications every query witnesses, as hints, and
+   which CEGQI takes as the constants' shapes *)
+val constant_defs : Ast.modul -> (string * Ast.term) list
+
 (* functionality axiom for each function *relation* (bool predicates are skipped —
    an SMT predicate is already a function of its arguments) *)
 val function_axioms : Ast.modul -> Ast.term list

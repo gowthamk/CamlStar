@@ -1,0 +1,32 @@
+module BoolConnectivesBad
+
+(* Negative control for tests/bool_connectives.cst: three false goals over the same
+   definitions. Expected: 3 failed, 0 verified, none of them unknown or an error. Not
+   run by strip_and_reprove.sh. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let is_zero (x:nat) = match x with
+  | Z -> true
+  | S _ -> false
+
+let rec le (x:nat) (y:nat) = match x, y with
+  | Z, _ -> true
+  | S _, Z -> false
+  | S a, S b -> le a b
+
+let lt (x:nat) (y:nat) = le x y && not (x = y)
+
+(* false: `not` negates the atom, and S x is not zero *)
+val not_bad : x:nat -> Lemma(ensures not (not (is_zero (S x))))
+let not_bad x = ()
+
+(* false: `&&` is conjunction, and lt Z (S Z) does not give le (S Z) Z *)
+val and_bad : x:nat -> Lemma(ensures lt Z (S x) && le (S x) Z)
+let and_bad x = ()
+
+(* false: `||` is disjunction, not conjunction: is_zero (S x) || lt x x is false *)
+val or_bad : x:nat -> Lemma(ensures is_zero (S x) || lt x x)
+let or_bad x = ()

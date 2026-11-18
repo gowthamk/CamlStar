@@ -1,0 +1,38 @@
+module OrPatternsBad
+
+(* Negative control for tests/or_patterns.cst: three false goals over the same
+   definitions. Expected: 3 failed, 0 verified, none of them unknown or an error. Not
+   run by strip_and_reprove.sh. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type color =
+  | Red : color
+  | Green : color
+  | Blue : color
+
+let is_warm (c:color) = match c with
+  | Red | Green -> true
+  | Blue -> false
+
+let rec either_zero (x:nat) (y:nat) = match x, y with
+  | Z, _ | _, Z -> true
+  | S a, S b -> either_zero a b
+
+let pick (x:nat) (y:nat) = match x, y with
+  | Z, n | n, Z -> n
+  | S _, S _ -> Z
+
+(* false: Blue is in no alternative of the true branch *)
+val warm_blue_bad : u:nat -> Lemma(ensures is_warm Blue)
+let warm_blue_bad u = ()
+
+(* false: neither alternative matches two successors *)
+val either_zero_bad : x:nat -> y:nat -> Lemma(ensures either_zero (S x) (S y))
+let either_zero_bad x y = ()
+
+(* false: the second alternative binds n to the first scrutinee, not Z *)
+val pick_bad : n:nat -> Lemma(ensures pick (S n) Z = Z)
+let pick_bad n = ()

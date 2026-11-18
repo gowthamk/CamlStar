@@ -1,0 +1,21 @@
+module HofRejectStored
+
+(* Rejection test: a function stored in a constructor field. Function values are outside
+   the fragment; a function may only be passed to a definition and applied there.
+   Expected: a specialization error naming the type and constructor, and no VC. Run by
+   tests/reject_hof.sh, which checks the line below.
+EXPECT: box: constructor Box has a function-typed field; a function may only be passed to a definition and applied
+*)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type box =
+  | Box : (nat -> nat) -> box
+
+let apply_box (b:box) (x:nat) = match b with
+  | Box f -> f x
+
+val apply_succ : x:nat -> Lemma(ensures apply_box (Box (fun y -> S y)) x = S x)
+let apply_succ x = ()

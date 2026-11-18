@@ -161,11 +161,13 @@ let rec go (naming : naming) (t : term) : string =
        (* a bool predicate applied under a Tm_var head (e.g. a recursive self-call):
           use its source name, matching its predicate declaration *)
        Printf.sprintf "(%s %s)" (sanitize v.vname) (String.concat " " (List.map (go naming) args))
-     | _ -> failwith "smtlib: application head is not a symbol")
+     | _ -> failwith "smtlib: internal error: an application whose head is not a symbol \
+                      (a function value reached the encoding)")
   | Tm_quant { qk; qv; qty; qbody } ->
     let sort = match qty with
       | Some ty -> (match ty with T_refine { rbase; _ } -> sort_of_base rbase
-                                | T_arrow _ -> failwith "smtlib: higher-order quantifier")
+                                | T_arrow _ -> failwith "smtlib: a quantifier over a \
+                                                        function is outside the fragment")
       | None -> failwith "smtlib: quantifier without a sort"
     in
     let q = match qk with Forall -> "forall" | Exists -> "exists" in

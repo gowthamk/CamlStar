@@ -1,0 +1,29 @@
+module HofRejectMatch
+
+(* Rejection test: a lambda whose body is a `match`, passed to a template with a refined
+   `val` that mentions the function (`f r`). The clone's `val` would get the `match` in
+   its refinement, a formula, which the encoding cannot read yet (todo item 53b; before
+   this guard it crashed with `anf: unexpected node in formula position`). Expected: a
+   specialization error, and no VC. The workaround the message gives, a top-level
+   predicate passed by name, verifies (`let is_pos x = match x with …` and
+   `find_or is_pos Z l`). Run by tests/reject_hof.sh, which checks the line below.
+EXPECT: has a `match` or `if` in its body, which would appear in the refinement of the clone's `val`; formulas with a `match` are not supported yet: define it as a top-level predicate and pass its name
+*)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+val find_or : f:(nat -> bool) -> d:nat -> l:nlist -> r:nat{f r \/ r = d}
+let rec find_or f d l = match l with
+  | NNil -> d
+  | NCons x rest -> if f x then x else find_or f d rest
+
+val find_pos : l:nlist ->
+  Lemma(ensures find_or (fun x -> match x with | Z -> false | S y -> true) Z l
+                = find_or (fun x -> match x with | Z -> false | S y -> true) Z l)
+let find_pos l = ()

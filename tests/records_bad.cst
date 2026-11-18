@@ -1,0 +1,53 @@
+module RecordsBad
+
+(* Negative control for tests/records.cst: seven false goals over the same records,
+   one per construct (projection, a function over a record, literal, update, field
+   access, record pattern, nested record). Expected: 7 failed, 0 verified, none of
+   them unknown or an error. Not run by strip_and_reprove.sh. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+type point = { px : nat; py : nat }
+
+type state = { count : nat; seen : nlist; origin : point }
+
+let bump (s:state) = Mkstate (S (count s)) (seen s) (origin s)
+
+(* false: the projections are distinct *)
+val px_bad : a:nat -> b:nat -> Lemma(ensures px (Mkpoint a b) = b)
+let px_bad a b = ()
+
+(* false: bump changes count *)
+val bump_bad : s:state -> Lemma(ensures count (bump s) = count s)
+let bump_bad s = match s with
+  | Mkstate c l o -> ()
+
+(* false: a literal's fields are placed by name, not by written order *)
+val lit_bad : a:nat -> b:nat -> Lemma(ensures px { py = a; px = b } = a)
+let lit_bad a b = ()
+
+(* false: an update changes the named field *)
+val upd_bad : s:state -> v:nat -> Lemma(ensures count { s with count = v } = count s)
+let upd_bad s v = match s with
+  | Mkstate c l o -> ()
+
+(* false: field access reads the named field *)
+val acc_bad : a:nat -> b:nat -> Lemma(ensures { px = a; py = b }.py = a)
+let acc_bad a b = ()
+
+(* false: a record pattern binds by field name, not by position *)
+let swap (p:point) = match p with
+  | { px = a; py = b } -> { px = b; py = a }
+
+val pat_bad : a:nat -> b:nat -> Lemma(ensures (swap { px = a; py = b }).px = a)
+let pat_bad a b = ()
+
+(* false: the nested field is py, not px *)
+val nested_bad : a:nat -> b:nat -> l:nlist -> Lemma(ensures py (origin (Mkstate Z l (Mkpoint a b))) = a)
+let nested_bad a b l = ()
