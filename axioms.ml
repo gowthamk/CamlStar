@@ -8,7 +8,9 @@ let rel_name (s : string) : string = s ^ "_rel"
 
 let base_of_typ (t : typ) : base_typ =
   match t with T_refine { rbase; _ } -> rbase
-             | T_arrow _ -> failwith "axioms: higher-order field/return not supported"
+             | T_arrow _ -> failwith "axioms: a function-typed field, parameter or result \
+                                      is outside the fragment (a function may only be \
+                                      passed to a definition and applied there)"
 
 (* apply an uninterpreted relation/constructor symbol to argument terms *)
 let apply (name : string) (args : term list) : term =
@@ -186,6 +188,64 @@ let function_sigs (m : modul) : (string * (base_typ list * base_typ)) list =
          | _ -> acc)
        [] m.mod_decls)
 
+(* Arity-0 symbols: an `assume val c : t` or a `let c : t = …` with no parameters. The
+   checker types them like any symbol, but they are no function (no [f_rel]) and no
+   constructor, so without this they would reach the query undeclared. Each becomes a
+   declared constant; a defined one also gets its equation (definitional_equations). *)
+let constant_sigs (m : modul) : (string * base_typ) list =
+  let seen : (string, unit) Hashtbl.t = Hashtbl.create 16 in
+  let add acc name (ty : typ) =
+    match ty with
+    | T_refine { rbase; _ } ->
+      if Hashtbl.mem seen name then acc
+      else (Hashtbl.add seen name (); (name, rbase) :: acc)
+    | T_arrow _ -> acc
+  in
+  List.rev
+    (List.fold_left
+       (fun acc se ->
+         match se.sig_el with
+         | Sig_val (l, sch) -> add acc l.bname sch.ts_typ
+         | Sig_let lbs ->
+           List.fold_left
+             (fun acc lb -> match lb.lb_scheme with
+                | Some sch -> add acc lb.lb_name.vname sch.ts_typ
+                | None -> acc)
+             acc lbs.lbs
+         | _ -> acc)
+       [] m.mod_decls)
+
+(* The right-hand side of every arity-0 `let` built only from applications and
+   constants (`let init = KCons A (KCons B KNil)`). Its definitional equation guards
+   each inner application on a value that nothing asserts exists, so the equation never
+   fires; the right-hand side is ground, so asserting those values (as `instantiate!`
+   would) is sound, and build_query treats these terms as hints in every query; CEGQI
+   takes them as the constants' shapes. A definition with a `match` or `let` is left
+   out (its equation is guarded, not ground), and so is a unit constant
+   (`let ok = assert …`), which carries no information. *)
+let constant_defs (m : modul) : (string * term) list =
+  let rec ground_app (t : term) : bool =
+    match t with
+    | Tm_fvar _ | Tm_const _ -> true
+    | Tm_app (f, a) -> ground_app f && ground_app a
+    | Tm_ascribed (e, _) -> ground_app e
+    | _ -> false
+  in
+  List.concat_map
+    (fun se ->
+      match se.sig_el with
+      | Sig_let { lb_rec = false; lbs } ->
+        List.filter_map
+          (fun lb ->
+            match lb.lb_scheme with
+            | Some { ts_typ = T_refine { rbase; _ }; _ }
+              when rbase <> B_unit && ground_app lb.lb_def ->
+              Some (lb.lb_name.vname, lb.lb_def)
+            | _ -> None)
+          lbs
+      | _ -> [])
+    m.mod_decls
+
 (* source names of functions that already return bool: these are encoded as SMT
    *predicates* [f : args -> Bool] under their own name, not relationally abstracted
    into [f_rel(args, result)] (a bool result column would be redundant — the function
@@ -207,6 +267,10 @@ let function_decls (m : modul) : string list =
           (Smtlib.sanitize (rel_name name))
           (String.concat " " (List.map Smtlib.sort_of_base (ins @ [ out ]))))
     (function_sigs m)
+  @ List.map
+      (fun (name, sort) ->
+        Printf.sprintf "(declare-const %s %s)" (Smtlib.sanitize name) (Smtlib.sort_of_base sort))
+      (constant_sigs m)
 
 (* Functionality is only needed for the *relations* (an SMT predicate is already a
    function of its arguments), so bool functions are skipped here. *)
@@ -243,6 +307,63 @@ let rec peel_lams (n : int) (e : term) : var list * term =
     | _ -> ([], e)
 
 let is_true_term (t : term) : bool = match t with Tm_const (C_bool true) -> true | _ -> false
+
+(* A `match` (or the `let` an `if` desugars to) nested inside an application —
+   `b && (if c then x else y)`, `S (match l with …)`, `f (if …) x` — is lifted out of it:
+   C[let v = e in b] → let v = e in C[b] and C[match s with | p -> e] → match s with
+   | p -> C[e], repeated until every match sits at the top of the body or under a let,
+   which is what gen_equations handles. Applications are pure and total over their
+   arguments, so moving the strict context C into the arms changes nothing; the copy
+   of C per arm is the one-equation-per-leaf shape the generator produces anyway. A
+   quantifier is a scope boundary: inside its body applications are lifted to the
+   body's top, never through the binder. *)
+let rec lift_nested (t : term) : term =
+  let rec spine t acc = match t with Tm_app (f, a) -> spine f (a :: acc) | _ -> (t, acc) in
+  let rec replace i x = function
+    | [] -> []
+    | a :: rest -> if i = 0 then x :: rest else a :: replace (i - 1) x rest
+  in
+  match t with
+  | Tm_app _ ->
+    let head, args = spine t [] in
+    let args = List.map lift_nested args in
+    let rec first i = function
+      | [] -> None
+      | (Tm_let _ | Tm_match _) as a :: _ -> Some (i, a)
+      | _ :: rest -> first (i + 1) rest
+    in
+    (match first 0 args with
+     | None -> mk_app head args
+     | Some (i, Tm_let (lbs, body)) ->
+       Tm_let (lbs, lift_nested (mk_app head (replace i body args)))
+     | Some (i, Tm_match (s, brs)) ->
+       Tm_match
+         (s, List.map (fun br ->
+                 { br with br_body = lift_nested (mk_app head (replace i br.br_body args)) })
+               brs)
+     | Some _ -> mk_app head args)
+  | Tm_let ({ lb_rec = false; lbs = [ lb ] }, body) ->
+    (* a let whose definition is itself a match or let moves below it *)
+    (match lift_nested lb.lb_def with
+     | Tm_let (lbs', inner) ->
+       Tm_let (lbs', lift_nested (Tm_let ({ lb_rec = false; lbs = [ { lb with lb_def = inner } ] }, body)))
+     | Tm_match (s, brs) ->
+       Tm_match
+         (s, List.map (fun br ->
+                 { br with br_body =
+                             lift_nested
+                               (Tm_let ({ lb_rec = false; lbs = [ { lb with lb_def = br.br_body } ] }, body)) })
+               brs)
+     | def -> Tm_let ({ lb_rec = false; lbs = [ { lb with lb_def = def } ] }, lift_nested body))
+  | Tm_let (lbs, body) ->
+    Tm_let ({ lbs with lbs = List.map (fun lb -> { lb with lb_def = lift_nested lb.lb_def }) lbs.lbs },
+            lift_nested body)
+  | Tm_match (s, brs) ->
+    Tm_match (s, List.map (fun br -> { br with br_body = lift_nested br.br_body }) brs)
+  | Tm_abs a -> Tm_abs { a with xbody = lift_nested a.xbody }
+  | Tm_quant q -> Tm_quant { q with qbody = lift_nested q.qbody }
+  | Tm_ascribed (e, ty) -> Tm_ascribed (lift_nested e, ty)
+  | Tm_var _ | Tm_fvar _ | Tm_const _ -> t
 
 (* does the declared type carry any user refinement (a non-trivial predicate)? *)
 let rec has_refinement (t : typ) : bool =
@@ -384,11 +505,13 @@ let definitional_equations (m : modul) : defeq list =
               | None -> (match lb.lb_scheme with Some s -> s.ts_typ | None -> mk_base B_unit)
             in
             match declared with
-            | T_arrow _
+            | T_arrow _ | T_refine _
               when fun_result declared <> B_unit && not (has_refinement declared) ->
+              (* a T_refine here is an arity-0 definition: no parameters, one equation *)
               let dom_bases = fun_doms declared in
               let vars, inner = peel_lams (List.length dom_bases) lb.lb_def in
-              (try gen_equations name (List.combine vars dom_bases) field_sorts ctors_of inner
+              (try gen_equations name (List.combine vars dom_bases) field_sorts ctors_of
+                     (lift_nested inner)
                with Invalid_argument _ -> [])
             | _ -> [])
           lbs.lbs

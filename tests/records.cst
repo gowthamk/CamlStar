@@ -1,0 +1,121 @@
+module Records
+
+(* Regression test for records. `type R = { f1 : t1; …; fn : tn }` is the datatype with
+   one constructor `MkR` plus one projection per field. Covers the constructor and the
+   projections used directly, record literals, functional update, field access, and
+   record patterns in a match, a local let and a proof body. The false goals over the
+   same definitions are tests/records_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+(* a record of two fields, and one nested inside another *)
+type point = { px : nat; py : nat }
+
+type state = { count : nat; seen : nlist; origin : point; }
+
+let bump (s:state) = Mkstate (S (count s)) (seen s) (origin s)
+
+(* record literals: declared order, another order, nested, trailing `;` *)
+let mk_point (a:nat) (b:nat) = { px = a; py = b }
+let mk_point' (a:nat) (b:nat) = { py = b; px = a; }
+let mk_state (c:nat) (l:nlist) (a:nat) (b:nat) = { count = c; seen = l; origin = { px = a; py = b } }
+
+val lit_px : a:nat -> b:nat -> Lemma(ensures px (mk_point a b) = a)
+let lit_px a b = ()
+
+val lit_order : a:nat -> b:nat -> Lemma(ensures mk_point' a b = mk_point a b)
+let lit_order a b = ()
+
+val lit_nested : c:nat -> l:nlist -> a:nat -> b:nat -> Lemma(ensures py (origin (mk_state c l a b)) = b)
+let lit_nested c l a b = ()
+
+(* functional update: one field, two fields, a non-variable subject, a nested literal *)
+let bump2 (s:state) = { s with count = S (count s) }
+let reset (s:state) = { s with count = Z; seen = NNil }
+let bump_fresh (c:nat) (l:nlist) (a:nat) (b:nat) = { mk_state c l a b with count = S c }
+let move (s:state) (a:nat) = { s with origin = { px = a; py = a } }
+
+val upd_count : s:state -> Lemma(ensures count (bump2 s) = S (count s))
+let upd_count s = ()
+
+val upd_other : s:state -> Lemma(ensures seen (bump2 s) = seen s)
+let upd_other s = ()
+
+val upd_two : s:state -> Lemma(ensures count (reset s) = Z /\ seen (reset s) = NNil /\ origin (reset s) = origin s)
+let upd_two s = ()
+
+val upd_fresh : c:nat -> l:nlist -> a:nat -> b:nat -> Lemma(ensures count (bump_fresh c l a b) = S c /\ seen (bump_fresh c l a b) = l)
+let upd_fresh c l a b = ()
+
+val upd_nested : s:state -> a:nat -> Lemma(ensures px (origin (move s a)) = a /\ count (move s a) = count s)
+let upd_nested s a = ()
+
+(* field access: in a body, chained, under an application, and in a spec *)
+let bump3 (s:state) = { s with count = S s.count }
+let ox (s:state) = s.origin.px
+let bump_ox (s:state) = S s.origin.px
+
+val acc_count : s:state -> Lemma(ensures s.count = count s)
+let acc_count s = ()
+
+val acc_bump3 : s:state -> Lemma(ensures (bump3 s).count = S s.count /\ (bump3 s).seen = s.seen)
+let acc_bump3 s = ()
+
+val acc_chain : s:state -> Lemma(ensures ox s = px (origin s) /\ bump_ox s = S (ox s))
+let acc_chain s = ()
+
+val acc_spec : a:nat -> b:nat -> Lemma(ensures { px = a; py = b }.py = b)
+let acc_spec a b = ()
+
+(* record patterns: named sub-patterns, punning, omitted fields, in a match arm, in a
+   local let, and in a proof body *)
+let swap (p:point) = match p with
+  | { px = a; py = b } -> { px = b; py = a }
+
+(* sub-patterns stay flat on this branch: a constructor inside a record pattern is a
+   nested constructor pattern, which the nested-patterns branch adds *)
+let first_seen (s:state) = match s with
+  | { seen = l; count } ->
+    (match l with
+     | NCons x r -> x
+     | NNil -> count)
+
+let sum_origin (s:state) =
+  let { origin } = s in
+  let { px; py; } = origin in
+  Mkpoint py px
+
+val pat_swap : a:nat -> b:nat -> Lemma(ensures (swap { px = a; py = b }).px = b)
+let pat_swap a b = ()
+
+val pat_first : c:nat -> x:nat -> r:nlist -> a:nat -> b:nat ->
+  Lemma(ensures first_seen (mk_state c (NCons x r) a b) = x /\ first_seen (mk_state c NNil a b) = c)
+let pat_first c x r a b = ()
+
+val pat_let : c:nat -> l:nlist -> a:nat -> b:nat -> Lemma(ensures (sum_origin (mk_state c l a b)).px = b)
+let pat_let c l a b = ()
+
+val pat_proof : s:state -> Lemma(ensures (bump2 s).count = S s.count)
+let pat_proof s = match s with
+  | { count; seen } -> ()
+
+val px_of_mk : a:nat -> b:nat -> Lemma(ensures px (Mkpoint a b) = a)
+let px_of_mk a b = ()
+
+val py_of_mk : a:nat -> b:nat -> Lemma(ensures py (Mkpoint a b) = b)
+let py_of_mk a b = ()
+
+val bump_count : s:state -> Lemma(ensures count (bump s) = S (count s))
+let bump_count s = ()
+
+val bump_seen : s:state -> Lemma(ensures seen (bump s) = seen s)
+let bump_seen s = ()
+
+val nested : a:nat -> b:nat -> l:nlist -> Lemma(ensures py (origin (Mkstate Z l (Mkpoint a b))) = b)
+let nested a b l = ()

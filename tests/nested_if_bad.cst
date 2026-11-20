@@ -1,0 +1,27 @@
+module NestedIfBad
+
+(* Negative control for tests/nested_if.cst: three false goals over the same
+   definitions. Expected: 3 failed, 0 verified, none of them unknown or an error. Not run
+   by strip_and_reprove.sh. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+let both (x:nat) (b:bool) = b /\ (if x = Z then true else false)
+
+let bump (x:nat) = S (if x = Z then Z else x)
+
+let via_let (x:nat) = let y = (if x = Z then S Z else x) in S y
+
+(* false: the if's else branch is false *)
+val both_bad : x:nat -> Lemma(ensures both (S x) true = true)
+let both_bad x = ()
+
+(* false: bump Z is S Z, not Z *)
+val bump_bad : u:nat -> Lemma(ensures bump Z = Z)
+let bump_bad u = ()
+
+(* false: via_let (S x) is S (S x) *)
+val via_let_bad : x:nat -> Lemma(ensures via_let (S x) = S x)
+let via_let_bad x = ()

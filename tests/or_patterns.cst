@@ -1,0 +1,78 @@
+module OrPatterns
+
+(* Regression test for or-patterns: `| p1 | p2 -> e` at the top of a branch, in both
+   the single- and the multi-scrutinee match. The parser emits one branch per
+   alternative, so the body is elaborated once per alternative in its own scope; as
+   in F*, all alternatives of a branch must bind the same names. The false goals over
+   the same definitions are tests/or_patterns_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type color =
+  | Red : color
+  | Green : color
+  | Blue : color
+
+(* constant alternatives *)
+let is_warm (c:color) = match c with
+  | Red | Green -> true
+  | Blue -> false
+
+(* alternatives binding the same name *)
+let payload (c:color) (x:nat) (y:nat) = match c with
+  | Red -> x
+  | Green | Blue -> y
+
+(* multi-scrutinee alternatives, with a wildcard in each *)
+let rec either_zero (x:nat) (y:nat) = match x, y with
+  | Z, _ | _, Z -> true
+  | S a, S b -> either_zero a b
+
+(* multi-scrutinee alternatives binding the same name *)
+let rec min (x:nat) (y:nat) = match x, y with
+  | Z, _ | _, Z -> Z
+  | S a, S b -> S (min a b)
+
+let pick (x:nat) (y:nat) = match x, y with
+  | Z, n | n, Z -> n
+  | S _, S _ -> Z
+
+val warm_red : u:nat -> Lemma(ensures is_warm Red)
+let warm_red u = ()
+
+val warm_green : u:nat -> Lemma(ensures is_warm Green)
+let warm_green u = ()
+
+val cold_blue : u:nat -> Lemma(ensures ~(is_warm Blue))
+let cold_blue u = ()
+
+val payload_green : x:nat -> y:nat -> Lemma(ensures payload Green x y = y)
+let payload_green x y = ()
+
+val payload_blue : x:nat -> y:nat -> Lemma(ensures payload Blue x y = y)
+let payload_blue x y = ()
+
+(* Goals over the multi-scrutinee definitions keep every scrutinee constructor-headed:
+   a goal over a bare `x:nat` needs a case split, which no proof here performs. *)
+val either_zero_l : x:nat -> Lemma(ensures either_zero Z (S x))
+let either_zero_l x = ()
+
+val either_zero_r : x:nat -> Lemma(ensures either_zero (S x) Z)
+let either_zero_r x = ()
+
+val either_zero_ss : x:nat -> y:nat -> Lemma(ensures either_zero (S x) (S y) = either_zero x y)
+let either_zero_ss x y = ()
+
+val min_zero_l : x:nat -> Lemma(ensures min Z (S x) = Z)
+let min_zero_l x = ()
+
+val min_zero_r : x:nat -> Lemma(ensures min (S x) Z = Z)
+let min_zero_r x = ()
+
+val pick_l : n:nat -> Lemma(ensures pick (S n) Z = S n)
+let pick_l n = ()
+
+val pick_r : n:nat -> Lemma(ensures pick Z (S n) = S n)
+let pick_r n = ()

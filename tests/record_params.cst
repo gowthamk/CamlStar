@@ -1,0 +1,43 @@
+module RecordParams
+
+(* Regression test for record patterns as `let` parameters, F*'s `let f {a; b} = …` and
+   `let f ({a; b = x}) = …`. The parameter is a fresh variable of the record type and
+   each named field is replaced in the body by its projection, so the body keeps its
+   shape. Covers punned fields, a renamed field, `_`, the parenthesized form, a record
+   parameter beside an ordinary one, and a match on a field (its scrutinee is bound to
+   a variable again after the substitution). The false goals over the same definitions
+   are tests/record_params_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+type state = { count : nat; seen : nlist }
+
+(* punned fields, and a match on one of them *)
+let total {count; seen} = match seen with
+  | NNil -> count
+  | NCons x r -> S count
+
+(* parenthesized, with a renamed field *)
+let bump ({count = c}) = S c
+
+(* `_`, and a record parameter beside an ordinary one *)
+let same_count {count; seen = _} (t:state) = count = t.count
+
+val total_nil : c:nat -> Lemma(ensures total { count = c; seen = NNil } = c)
+let total_nil c = ()
+
+val total_cons : c:nat -> x:nat -> r:nlist ->
+  Lemma(ensures total { count = c; seen = NCons x r } = S c)
+let total_cons c x r = ()
+
+val bump_eq : s:state -> Lemma(ensures bump s = S s.count)
+let bump_eq s = ()
+
+val same_refl : s:state -> Lemma(ensures same_count s s)
+let same_refl s = ()

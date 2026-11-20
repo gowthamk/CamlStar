@@ -1,0 +1,50 @@
+module ConstWitnessBad
+
+(* Negative control for tests/const_witness.cst: false facts about the same constants.
+   Expected: 4 failed, 0 verified, none of them unknown or an error. Not run by
+   strip_and_reprove.sh. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type ag =
+  | A : ag
+  | B : ag
+  | C : ag
+
+type kl =
+  | KNil : kl
+  | KCons : ag -> kl -> kl
+
+let rec len (k:kl) = match k with
+  | KNil -> Z
+  | KCons y r -> S (len r)
+
+let single (a:ag) = KCons a KNil
+
+let init : kl = KCons A (KCons B (KCons C KNil))
+
+let more : kl = KCons C init
+
+let one : kl = single B
+
+(* false: init is a non-empty list *)
+val init_nil_bad : u:nat -> Lemma(ensures init = KNil)
+let init_nil_bad u = ()
+
+let pair : kl = KCons A (KCons B KNil)
+
+(* false: pair has two elements. A length claim about the three-cell `init` is not used
+   here: on a false goal CEGQI unfolds `len` one cell per round and the default fuel of
+   three runs out first, so it reports `fuel exhausted`, not failed. *)
+val pair_len_bad : u:nat -> Lemma(ensures len pair = Z)
+let pair_len_bad u = ()
+
+(* false: more is C followed by init, not init itself *)
+val more_bad : u:nat -> Lemma(ensures more = init)
+let more_bad u = ()
+
+(* false: one is the list of B *)
+val one_bad : u:nat -> Lemma(ensures one = KCons A KNil)
+let one_bad u = ()

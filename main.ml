@@ -1,4 +1,5 @@
-(* main.ml — the `camlstar` driver: parse -> infer -> check -> (optionally) solve.
+(* main.ml — the `camlstar` driver: parse -> infer -> specialize -> infer -> check ->
+   (optionally) solve.
 
    Usage: camlstar [--print-vcs] [--solve] [--dump-smt DIR] FILE.cst
 
@@ -79,8 +80,9 @@ let () =
     exit 2
   | Some fn ->
     (try
-       let m = Parse.parse_file fn in
-       let m = Infer.infer_module m in
+       let parsed = Parse.parse_file fn in
+       let typed = Infer.infer_module parsed in
+       let m = Infer.infer_module (Specialize.specialize_module ~typed parsed) in
        let vcs = Check.check_module m in
        if !print_vcs then begin
          let out = vcs_path fn in
@@ -144,4 +146,7 @@ let () =
        exit 1
      | Check.Check_error msg ->
        Printf.eprintf "check error: %s\n" msg;
+       exit 1
+     | Specialize.Specialize_error msg ->
+       Printf.eprintf "specialization error: %s\n" msg;
        exit 1)

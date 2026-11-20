@@ -170,8 +170,11 @@ let build_query (m : modul) (ret_sort : string -> base_typ) (vc : Vc.t) : string
   let naming = Smtlib.make_naming (List.map fst vc.Vc.scope) in  (* readable model names *)
   let anf_f = Anf.normalize (is_pred ret_sort) (vc_formula vc) in
   let f = Relabs.transform ret_sort (Nnf.normalize anf_f) in     (* the negated VC *)
-  (* materialise both the VC's ground applied subterms and each instantiate! hint *)
-  let hint_binds = List.concat_map (Anf.hoist (is_pred ret_sort)) vc.Vc.instantiations in
+  (* materialise the VC's ground applied subterms, each instantiate! hint, and the
+     applications inside every constant's definition (Axioms.constant_defs) *)
+  let hint_binds =
+    List.concat_map (Anf.hoist (is_pred ret_sort))
+      (vc.Vc.instantiations @ List.map snd (Axioms.constant_defs m)) in
   let mat = materialize_binds ret_sort (ground_lets anf_f @ hint_binds) in
   let sort_decls, const_decls = scope_decls naming vc.Vc.scope in
   let final_axioms = global_final_axioms m in

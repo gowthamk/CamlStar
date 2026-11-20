@@ -1,0 +1,63 @@
+module NestedIf
+
+(* Regression test for an `if` or `match` nested inside an application in a definition
+   body — under `/\`, inside a constructor argument, inside a function argument, and as
+   a let's definition. Before the fix (Axioms.lift_nested) every such body died with
+   `anf: unexpected node in value position`; now the match is lifted out of the
+   application and each arm gets its own equation. The false goals over the same
+   definitions are tests/nested_if_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+let rec le (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S a -> (match y with
+            | Z -> false
+            | S b -> le a b)
+
+(* under a connective *)
+let both (x:nat) (b:bool) = b /\ (if x = Z then true else false)
+
+(* inside a constructor argument *)
+let bump (x:nat) = S (if x = Z then Z else x)
+
+(* inside a function argument *)
+let le_or_one (x:nat) = le (if x = Z then S Z else x) x
+
+(* a match, not an if, under a connective *)
+let empty_and (l:nlist) (b:bool) = b /\ (match l with
+                                         | NNil -> true
+                                         | NCons h t -> false)
+
+(* as a let's definition *)
+let via_let (x:nat) = let y = (if x = Z then S Z else x) in S y
+
+val both_z : b:bool -> Lemma(ensures both Z b = b)
+let both_z b = ()
+
+val both_s : x:nat -> b:bool -> Lemma(ensures both (S x) b = false)
+let both_s x b = ()
+
+val bump_z : u:nat -> Lemma(ensures bump Z = S Z)
+let bump_z u = ()
+
+val bump_s : x:nat -> Lemma(ensures bump (S x) = S (S x))
+let bump_s x = ()
+
+val le_or_one_z : u:nat -> Lemma(ensures le_or_one Z = false)
+let le_or_one_z u = ()
+
+val empty_and_nil : b:bool -> Lemma(ensures empty_and NNil b = b)
+let empty_and_nil b = ()
+
+val empty_and_cons : h:nat -> t:nlist -> b:bool -> Lemma(ensures empty_and (NCons h t) b = false)
+let empty_and_cons h t b = ()
+
+val via_let_z : u:nat -> Lemma(ensures via_let Z = S (S Z))
+let via_let_z u = ()
