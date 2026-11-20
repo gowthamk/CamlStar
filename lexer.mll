@@ -15,6 +15,7 @@ let () =
       "fun", FUN; "if", IF; "then", THEN; "else", ELSE;
       "forall", FORALL; "exists", EXISTS; "requires", REQUIRES; "ensures", ENSURES;
       "assert", ASSERT; "true", TRUE; "false", FALSE;
+      "not", TILDE;   (* F*'s boolean `not e` — same term as `~ e` *)
       "Lemma", LEMMA;
       "private", PRIVATE; "irreducible", IRREDUCIBLE; "unfold", UNFOLD;
       "noeq", NOEQ; "logic", LOGIC ]
@@ -73,6 +74,10 @@ rule token = parse
   | "->"               { ARROW }
   | "/\\"              { CONJ }
   | "\\/"              { DISJ }
+  (* F*'s boolean `&&`/`||`: there is no bool/prop split in Caml*, so they are the
+     same terms as `/\`/`\/` and sit at the same precedence level *)
+  | "&&"               { CONJ }
+  | "||"               { DISJ }
 
   (* single-char punctuation / operators *)
   | '('                { LPAREN }

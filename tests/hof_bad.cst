@@ -1,0 +1,64 @@
+module HofBad
+
+(* Negative control for the higher-order specialization tests: false goals over the
+   same templates and lambdas as tests/hof_map.cst, hof_capture.cst, hof_local.cst and
+   hof_spec.cst. Expected after specialization: the four lemmas fail (saturated), none
+   unknown or an error; the clone of `find_or` verifies against its own spec (3 VCs),
+   so 3 verified, 4 failed, 7 VCs (measured, and equal to the hand-specialized
+   equivalent). Not run by strip_and_reprove.sh. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+type onat =
+  | NoneN : onat
+  | SomeN : nat -> onat
+
+let rec le (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S a -> (match y with
+            | Z -> false
+            | S b -> le a b)
+
+let rec len (l:nlist) = match l with
+  | NNil -> Z
+  | NCons x r -> S (len r)
+
+let rec map (f:nat -> nat) (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> NCons (f x) (map f r)
+
+let rec filter (p:nat -> bool) (l:nlist) = match l with
+  | NNil -> NNil
+  | NCons x r -> if p x then NCons x (filter p r) else filter p r
+
+let rec find (f:nat -> bool) (l:nlist) = match l with
+  | NNil -> NoneN
+  | NCons x r -> if f x then SomeN x else find f r
+
+val find_or : f:(nat -> bool) -> d:nat -> l:nlist -> r:nat{f r \/ r = d}
+let rec find_or f d l = match l with
+  | NNil -> d
+  | NCons x rest -> if f x then x else find_or f d rest
+
+(* false: map keeps the length *)
+val map_grows : xs:nlist -> Lemma(ensures len (map (fun x -> S x) xs) = S (len xs))
+let map_grows xs = ()
+
+(* false: filter drops elements *)
+val filter_keeps : v:nat -> xs:nlist -> Lemma(ensures filter (fun x -> le v x) xs = xs)
+let filter_keeps v xs = ()
+
+(* false: find can miss *)
+val find_hits : v:nat -> l:nlist -> Lemma(ensures find (fun x -> le v x) l = SomeN v)
+let find_hits v l = ()
+
+(* false: find_or can return the default *)
+val find_or_never_default : v:nat -> l:nlist ->
+  Lemma(ensures le v (find_or (fun x -> le v x) Z l) = true)
+let find_or_never_default v l = let r = find_or (fun x -> le v x) Z l in ()
