@@ -1,0 +1,55 @@
+module AssumedLemma
+
+(* Regression test for `axiom`: a lemma-shaped global axiom. `axiom L : params ->
+   Lemma(requires p)(ensures q)` is asserted in every VC as `forall params. p ==> q`; no
+   call is needed, and it stays callable. `assume val L : … -> Lemma(…)` keeps F*'s
+   meaning: an unproven lemma that enters a proof only through a call. The first three
+   goals have empty bodies; the last two call an `axiom` and an `assume val`. The goals
+   the axioms do not entail, and an uncalled `assume val`, are in
+   tests/assumed_lemma_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+let rec nmem (x:nat) (l:nlist) = match l with
+  | NNil -> false
+  | NCons y r -> if x = y then true else nmem x r
+
+assume val f : nat -> nat
+assume val is_q : nlist -> bool
+
+(* one parameter, no requires *)
+axiom f_fix : x:nat -> Lemma(ensures f (f x) = f x)
+
+(* requires, two parameters, an exists in the conclusion (the quorum shape) *)
+axiom q_inter : q1:nlist -> q2:nlist ->
+  Lemma(requires is_q q1 /\ is_q q2)(ensures exists (n:nat). nmem n q1 /\ nmem n q2)
+
+(* no parameter: a closed fact *)
+axiom one_fix : Lemma(ensures f (S Z) = S Z)
+
+(* an unproven lemma, F*-style: a fact only where it is called *)
+assume val two_fix : u:nat -> Lemma(ensures f (S (S Z)) = S (S Z))
+
+val use_fix : x:nat -> Lemma(ensures f (f (f x)) = f x)
+let use_fix x = ()
+
+val use_inter : q1:nlist -> q2:nlist ->
+  Lemma(ensures is_q q1 /\ is_q q2 ==> (exists (n:nat). nmem n q1 /\ nmem n q2))
+let use_inter q1 q2 = ()
+
+val use_one : u:nat -> Lemma(ensures f (f (S Z)) = S Z)
+let use_one u = ()
+
+(* an axiom can still be called *)
+val use_call : x:nat -> Lemma(ensures f (f x) = f x)
+let use_call x = f_fix x
+
+(* an assume val must be called *)
+val use_two : u:nat -> Lemma(ensures f (S (S Z)) = S (S Z))
+let use_two u = two_fix u

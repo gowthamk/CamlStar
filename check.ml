@@ -416,6 +416,29 @@ and extend_lets (env : env) (lbs : letbindings) : binding list * Vc.t list =
     let results = List.map process named in
     (List.concat_map fst results, List.concat_map snd results)
 
+(* A lemma-shaped axiom. `axiom L : x1:t1 -> … -> Lemma(requires p)(ensures q)` closes
+   to `forall x1 … xn. r1 ==> … ==> p ==> q`: a parameter's refinement r_i and the
+   `requires` squash domain become antecedents, the final squash is the conclusion. It
+   is a module axiom, in every VC, and needs no call; it stays callable. An `assume val`
+   lemma is not closed: as in F*, it is a fact only where it is called. Only a
+   monomorphic, first-order lemma closes; anything else stays callable only. *)
+let axiom_of_lemma (sch : tscheme) : term option =
+  let rec close (t : typ) : term option =
+    match t with
+    | T_refine { rbase = B_unit; rphi; _ } -> Some rphi
+    | T_arrow { adom = T_refine { rbase = B_unit; rphi; _ }; acod; _ } ->
+      (* a `requires` squash (or a unit parameter) *)
+      Option.map (fun body -> if is_true rphi then body else mk_imp rphi body) (close acod)
+    | T_arrow { abinder; adom = T_refine { rv; rbase; rphi }; acod } ->
+      Option.map
+        (fun body ->
+          let r = Subst.subst_term [ (rv, Tm_var abinder) ] rphi in
+          mk_forall abinder (Some (mk_base rbase)) (if is_true r then body else mk_imp r body))
+        (close acod)
+    | T_arrow { adom = T_arrow _; _ } | T_refine _ -> None
+  in
+  if sch.ts_vars <> [] then None else close sch.ts_typ
+
 (* ===== module entry point ===== *)
 
 let check_module (m : modul) : Vc.t list =
@@ -429,7 +452,12 @@ let check_module (m : modul) : Vc.t list =
       | Sig_inductive ind ->
         Hashtbl.replace ind_tbl ind.ind_name.bname ind.ind_ctors;
         List.iter (fun dc -> Hashtbl.replace genv dc.dc_name.bname dc.dc_typ) ind.ind_ctors
-      | Sig_val (l, sch) -> Hashtbl.replace genv l.bname sch
+      | Sig_val (l, sch) ->
+        Hashtbl.replace genv l.bname sch;
+        if List.mem Q_axiom se.sig_quals then
+          (match axiom_of_lemma sch with
+           | Some phi when not (is_true phi) -> module_axioms := !module_axioms @ [ phi ]
+           | _ -> ())
       | Sig_let lbs ->
         (* a matching [val] (registered earlier) is the refined spec and wins; only
            supply the shape-only [lb_scheme] when no [val] declared this name *)

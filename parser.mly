@@ -417,7 +417,7 @@ let build_abs_params params body sc =
 %token <int> INT
 %token <float> FLOAT
 
-%token MODULE LET REC AND IN VAL ASSUME TYPE MATCH WITH FUN IF THEN ELSE
+%token MODULE LET REC AND IN VAL ASSUME AXIOM TYPE MATCH WITH FUN IF THEN ELSE
 %token FORALL EXISTS REQUIRES ENSURES ASSERT WHEN TRUE FALSE LEMMA INSTANTIATE
 %token PRIVATE IRREDUCIBLE UNFOLD NOEQ LOGIC
 
@@ -527,6 +527,13 @@ rawDecl:
                    [Q_assumption]) }
   | ASSUME name=anyname COLON phi=term
       { fun sc -> (Sig_assume (name, phi sc), []) }
+  /* A lemma-shaped global axiom: `axiom L : x1:t1 -> … -> Lemma(requires p)(ensures q)`
+     is asserted in every VC as `forall x1 … xn. p ==> q` (Check.axiom_of_lemma), and
+     stays callable. `assume val` keeps F*'s meaning: unproven, a fact only where called. */
+  | AXIOM name=IDENT COLON t=compTyp
+      { fun sc -> let tt = t sc in
+                  (Sig_val (lid_of_str name, { ts_vars = scope_tyvars sc; ts_typ = tt }),
+                   [Q_axiom]) }
   | LET r=recflag lbs=separated_nonempty_list(AND, letbinding)
       { fun sc -> let (lbs', _) = build_lets r lbs sc in (Sig_let lbs', []) }
   | p=pragma

@@ -11,7 +11,7 @@ let keyword_table : (string, token) Hashtbl.t = Hashtbl.create 64
 let () =
   List.iter (fun (k, t) -> Hashtbl.add keyword_table k t)
     [ "module", MODULE; "let", LET; "rec", REC; "and", AND; "in", IN;
-      "val", VAL; "assume", ASSUME; "type", TYPE; "match", MATCH; "with", WITH;
+      "val", VAL; "assume", ASSUME; "axiom", AXIOM; "type", TYPE; "match", MATCH; "with", WITH;
       "fun", FUN; "if", IF; "then", THEN; "else", ELSE;
       "forall", FORALL; "exists", EXISTS; "requires", REQUIRES; "ensures", ENSURES;
       "assert", ASSERT; "true", TRUE; "false", FALSE;

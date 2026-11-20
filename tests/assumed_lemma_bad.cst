@@ -1,0 +1,35 @@
+module AssumedLemmaBad
+
+(* Goals the axioms of tests/assumed_lemma.cst do not entail, and an `assume val` that
+   is not called; each must stay red. Expected: 0 verified, 4 failed. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+assume val f : nat -> nat
+assume val g : nat -> nat
+
+axiom f_fix : x:nat -> Lemma(ensures f (f x) = f x)
+
+(* f is idempotent, not the identity *)
+val not_id : x:nat -> Lemma(ensures f x = x)
+let not_id x = ()
+
+(* a requires that is not known to hold gives nothing *)
+axiom g_pre : x:nat -> Lemma(requires g x = Z)(ensures g (g x) = Z)
+
+val no_pre : x:nat -> Lemma(ensures g (g x) = Z)
+let no_pre x = ()
+
+(* an axiom about S x says nothing about Z *)
+axiom g_succ : x:nat -> Lemma(ensures g (S x) = S x)
+
+val other_case : u:nat -> Lemma(ensures g Z = Z)
+let other_case u = ()
+
+(* an assume val is not an axiom: uncalled, it gives nothing *)
+assume val g_zero : u:nat -> Lemma(ensures g Z = Z)
+
+val uncalled : u:nat -> Lemma(ensures g Z = Z)
+let uncalled u = ()
