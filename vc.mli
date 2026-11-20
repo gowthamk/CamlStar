@@ -28,6 +28,8 @@ type t = {
   instantiations : Ast.term list;            (* instantiate! hints: terms to materialise *)
   range  : Ast.range;                        (* source of the obligation, for error reporting *)
   reason : string;                           (* human-readable label *)
+  as_written : (Ast.term * Ast.term) list;   (* (hypothesis as written, its unfolding), for the report *)
+  goal_as_written : Ast.term option;         (* the goal as written, when solving peeled or unfolded it *)
 }
 
 val string_of_t : t -> string

@@ -1,0 +1,56 @@
+module QuantDef
+
+(* Regression test for a definition whose body is a quantified formula, the shape of a
+   protocol invariant: `let inv s = forall n. …`. Such a definition gets no equation;
+   it is unfolded at its uses in specs and proofs. Before the fix every file with one
+   died with `anf: unexpected node in value position`. Covers a quantified predicate in
+   `requires`, in `ensures`, as the premise of a called lemma, and one nested inside
+   another. The false goals over the same definitions are tests/quant_def_bad.cst. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+let rec mem (x:nat) (l:nlist) = match l with
+  | NNil -> false
+  | NCons y r -> if x = y then true else mem x r
+
+let rec le (x:nat) (y:nat) = match x with
+  | Z -> true
+  | S a -> (match y with
+            | Z -> false
+            | S b -> le a b)
+
+(* every element is zero *)
+let all_z (l:nlist) = forall (y:nat). mem y l ==> y = Z
+
+(* x is below every element *)
+let lower (x:nat) (l:nlist) = forall (y:nat). mem y l ==> le x y
+
+(* a quantified predicate whose body uses another *)
+let all_z_lower (l:nlist) = all_z l /\ lower Z l
+
+(* as a premise and as the goal *)
+val all_z_cons : l:nlist -> Lemma(ensures all_z l ==> all_z (NCons Z l))
+let all_z_cons l = ()
+
+(* as the premise of a called lemma *)
+val all_z_cons_cons : l:nlist -> Lemma(ensures all_z l ==> all_z (NCons Z (NCons Z l)))
+let all_z_cons_cons l = let _ = all_z_cons l in all_z_cons (NCons Z l)
+
+(* two parameters *)
+val lower_cons : x:nat -> y:nat -> l:nlist ->
+  Lemma(ensures lower x l /\ le x y ==> lower x (NCons y l))
+let lower_cons x y l = ()
+
+(* nested *)
+val all_z_lower_nil : u:nat -> Lemma(ensures all_z_lower NNil)
+let all_z_lower_nil u = ()
+
+(* the empty list satisfies every such predicate *)
+val all_z_nil : u:nat -> Lemma(ensures all_z NNil)
+let all_z_nil u = ()

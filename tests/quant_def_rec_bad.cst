@@ -1,0 +1,26 @@
+module QuantDefRecBad
+
+(* Error test for tests/quant_def.cst: a recursive definition whose body is a quantified
+   formula. Expected: the run stops with
+     error: below_all is recursive and its body is a quantified formula; a quantified
+     predicate cannot be recursive
+   and no VC is solved. Not run by strip_and_reprove.sh. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+type nlist =
+  | NNil : nlist
+  | NCons : nat -> nlist -> nlist
+
+let rec mem (x:nat) (l:nlist) = match l with
+  | NNil -> false
+  | NCons y r -> if x = y then true else mem x r
+
+let rec below_all (x:nat) (l:nlist) = match x with
+  | Z -> true
+  | S a -> (forall (y:nat). mem y l ==> y = Z) /\ below_all a l
+
+val below_all_nil : x:nat -> Lemma(ensures below_all x NNil)
+let below_all_nil x = ()

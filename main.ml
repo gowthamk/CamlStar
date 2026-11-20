@@ -6,7 +6,11 @@
    Runs the pipeline and prints a summary. Flags:
      --print-vcs   write FILE.vcs (the generated sequents) beside the source
      --solve       discharge each VC with z3 and report verified/failed/unknown
+     --failures-only  with --solve: print only the VCs that did not verify (the summary
+                   line still counts them all)
      --dump-smt D  write each VC's SMT-LIB2 query to D/<reason>_<i>.smt2
+     --no-cex      with --solve: report an unverified VC as `failed` with its location
+                   only (no branch, hypotheses, countermodel or instantiated terms)
    Exits nonzero on a parse/type/check error, or (with --solve) if any VC is not
    verified. *)
 
@@ -39,9 +43,23 @@ let print_context (ctors : string list) (vc : Vc.t) : unit =
    | [] -> ()
    | ds -> Printf.printf "  • Branch: %s\n" (String.concat " / " ds));
   Printf.printf "  • Hypotheses:\n";
-  match vc.Vc.hyps with
-  | [] -> Printf.printf "    (none)\n"
-  | hs -> List.iter (fun h -> Printf.printf "    %s\n" (Ast.string_of_term h)) hs
+  (match vc.Vc.hyps with
+   | [] -> Printf.printf "    (none)\n"
+   | hs ->
+     List.iter
+       (fun h ->
+         (* a hypothesis that solving unfolded: its written form, then the unfolding *)
+         match List.find_opt (fun (_, u) -> u = h) vc.Vc.as_written with
+         | Some (w, _) ->
+           Printf.printf "    %s\n      ≡ %s\n" (Ast.string_of_term w) (Ast.string_of_term h)
+         | None -> Printf.printf "    %s\n" (Ast.string_of_term h))
+       hs);
+  (* the goal, when solving peeled or unfolded it into something other than the ensures *)
+  match vc.Vc.goal_as_written with
+  | Some w ->
+    Printf.printf "  • Goal: %s\n      (from %s)\n" (Ast.string_of_term vc.Vc.goal)
+      (Ast.string_of_term w)
+  | None -> ()
 
 let print_ledger (vc : Vc.t) : unit =
   Printf.printf "  • Instantiated terms:\n";
@@ -52,11 +70,13 @@ let print_ledger (vc : Vc.t) : unit =
 let () =
   let print_vcs = ref false in
   let solve = ref false in
+  let failures_only = ref false in
   let dump_smt = ref None in
   let cegqi = ref true in
   let fuel = ref 3 in
   let trace = ref false in
   let timeout = ref 10000 in
+  let no_cex = ref false in
   let file = ref None in
   let args = Sys.argv in
   let i = ref 1 in
@@ -64,11 +84,13 @@ let () =
     (match args.(!i) with
      | "--print-vcs" -> print_vcs := true
      | "--solve" -> solve := true
+     | "--failures-only" -> failures_only := true
      | "--dump-smt" -> incr i; if !i < Array.length args then dump_smt := Some args.(!i)
      | "--no-cegqi" -> cegqi := false
      | "--cegqi-trace" -> trace := true
      | "--fuel" -> incr i; if !i < Array.length args then fuel := int_of_string args.(!i)
      | "--timeout" -> incr i; if !i < Array.length args then timeout := int_of_string args.(!i)
+     | "--no-cex" -> no_cex := true
      | arg -> file := Some arg);
     incr i
   done;
@@ -76,7 +98,7 @@ let () =
   | None ->
     prerr_endline
       "usage: camlstar [--print-vcs] [--solve] [--dump-smt DIR] \
-       [--no-cegqi] [--fuel N] [--cegqi-trace] [--timeout MS] <file.cst>";
+        [--no-cegqi] [--fuel N] [--cegqi-trace] [--timeout MS] [--no-cex] [--failures-only] <file.cst>";
     exit 2
   | Some fn ->
     (try
@@ -97,6 +119,14 @@ let () =
            Smt.solve_module ?dump_dir:!dump_smt ~cegqi:!cegqi ~fuel:!fuel ~trace:!trace
              ~timeout_ms:!timeout m vcs
          in
+         (* --no-cex: what a verifier without countermodels prints for a failed query —
+            that it failed, and where. Saturated, fuel-exhausted and timed-out VCs are
+            all `failed`; the engine runs exactly as without the flag. *)
+         let label v =
+           match v with
+           | (Smt.Saturated _ | Smt.Fuel_exhausted _ | Smt.Unknown) when !no_cex -> "failed"
+           | _ -> Smt.string_of_verdict v
+         in
          let verified = ref 0 and failed = ref 0 and unknown = ref 0 and errored = ref 0 in
          let ctors =
            List.concat_map
@@ -114,10 +144,13 @@ let () =
               | Smt.Fuel_exhausted _ -> incr unknown
               | Smt.Unknown -> incr unknown
               | Smt.Solver_error _ -> incr errored);
-             if !solve then begin
+             (* --failures-only: a large file's verified VCs bury the few that need reading *)
+             if !solve && not (!failures_only && v = Smt.Verified) then begin
                Printf.printf "  [VC#%s: %s] %s\n" (string_of_int @@ i+1)
-                                  (Smt.string_of_verdict v) vc.Vc.reason;
+                                  (label v) vc.Vc.reason;
                match v with
+               | (Smt.Saturated _ | Smt.Fuel_exhausted _ | Smt.Unknown) when !no_cex ->
+                 Printf.printf "  • Location: %s\n" (Ast.string_of_range vc.Vc.range)
                | Smt.Saturated cex | Smt.Fuel_exhausted cex ->
                  print_context ctors vc;
                  Printf.printf "  • Counterexample:\n%s\n" (Cex.to_json cex);
@@ -127,11 +160,11 @@ let () =
              end)
            results;
          Printf.printf "%d verified, %d failed, %d unknown, %d errors (of %d VCs); %d solver call(s)\n"
-           !verified !failed !unknown !errored (List.length vcs) (Smt.solver_calls ());
+           !verified !failed !unknown !errored (List.length results) (Smt.solver_calls ());
          if !failed > 0 || !unknown > 0 then
-           print_endline
+           (if not !no_cex then print_endline
              "note: unverified VCs may be spurious \
-              (relational abstraction overapproximates functions)";
+              (relational abstraction overapproximates functions)");
          if !failed > 0 || !unknown > 0 || !errored > 0 then exit 1
        end
        else
@@ -146,6 +179,9 @@ let () =
        exit 1
      | Check.Check_error msg ->
        Printf.eprintf "check error: %s\n" msg;
+       exit 1
+     | Axioms.Quantified_def_error msg ->
+       Printf.eprintf "error: %s\n" msg;
        exit 1
      | Specialize.Specialize_error msg ->
        Printf.eprintf "specialization error: %s\n" msg;
