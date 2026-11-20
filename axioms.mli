@@ -18,6 +18,10 @@ val constructor_decls : Ast.modul -> string list
 (* functionality / injectivity / disjointness axioms as ordinary Ast.terms *)
 val datatype_axioms : Ast.modul -> Ast.term list
 
+(* enum types: no type parameters and only nullary constructors, the datatypes whose
+   exhaustiveness is universal *)
+val enum_types : Ast.modul -> Ast.inductive list
+
 (* source names of functions that return bool: encoded as SMT predicates [f: args ->
    Bool] under their own name rather than relationally abstracted into [f_rel] *)
 val bool_fn_names : Ast.modul -> string list

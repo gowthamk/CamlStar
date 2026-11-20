@@ -109,6 +109,17 @@ let cinfos (ind : inductive) : cinfo list =
       { cname = dc.dc_name.bname; inputs; output })
     ind.ind_ctors
 
+(* Enum types: no type parameters, and every constructor takes no arguments. Their
+   exhaustiveness, `forall x. x = C1 \/ … \/ x = Ck`, is universal, so it is the one
+   exhaustiveness axiom that stays in EPR; a type with a field would need `exists` for
+   the field (∀∃). *)
+let enum_types (m : modul) : inductive list =
+  List.filter
+    (fun ind ->
+      ind.ind_params = [] && ind.ind_ctors <> []
+      && List.for_all (fun c -> c.inputs = []) (cinfos ind))
+    (inductives m)
+
 (* every uninterpreted sort the datatypes reference (self + fields), deduped *)
 let datatype_sort_decls (m : modul) : string list =
   let seen : (string, unit) Hashtbl.t = Hashtbl.create 16 in
@@ -160,6 +171,18 @@ let datatype_axioms (m : modul) : term list =
       in
       per_ctor @ pairs cs)
     (inductives m)
+  @ List.map
+      (fun ind ->
+        (* exhaustiveness of an enum type: ∀x. x = C1 ∨ … ∨ x = Ck (universal, so EPR) *)
+        let x = fresh_var "x" in
+        let alts =
+          List.map (fun c -> mk_eq (Tm_var x) (Tm_fvar (lid_of_str c.cname))) (cinfos ind) in
+        let body = match alts with
+          | a :: rest -> List.fold_left mk_or a rest
+          | [] -> mk_false
+        in
+        forall_sorted [ (x, B_app (ind.ind_name, [])) ] body)
+      (enum_types m)
 
 (* ===== functions ===== *)
 
