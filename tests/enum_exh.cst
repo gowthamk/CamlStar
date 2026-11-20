@@ -1,0 +1,44 @@
+module EnumExh
+
+(* Regression test for exhaustiveness of enum types: a datatype whose constructors all
+   take no arguments has exactly those constructors as values, `forall x. x = C1 \/ …
+   \/ x = Ck`. The axiom is universal, so it stays in EPR. Before it, a countermodel
+   could hold a value that is none of the constructors, and a proof had to rule that
+   out with a lemma matching on the variable (`agent_exh` in the NSL proofs). Every
+   goal below has an empty body. The false goals over the same types are
+   tests/enum_exh_bad.cst. *)
+
+type agent =
+  | Alice : agent
+  | Bob : agent
+  | Charlie : agent
+
+type nonce =
+  | Na : nonce
+  | Nb : nonce
+
+let isHonest (a:agent) = match a with
+  | Alice -> true
+  | Bob -> true
+  | Charlie -> false
+
+(* a default arm *)
+let isCharlie (a:agent) = match a with
+  | Charlie -> true
+  | _ -> false
+
+(* the three values, and nothing else *)
+val agent_cases : a:agent -> Lemma(ensures a = Alice \/ a = Bob \/ a = Charlie)
+let agent_cases a = ()
+
+(* the NSL shape: an honest agent that is not Alice is Bob *)
+val honest_not_alice : a:agent -> Lemma(ensures (isHonest a /\ ~(a = Alice)) ==> a = Bob)
+let honest_not_alice a = ()
+
+(* through a default arm *)
+val not_charlie : a:agent -> Lemma(ensures ~(isCharlie a) ==> (a = Alice \/ a = Bob))
+let not_charlie a = ()
+
+(* two enums together *)
+val nonce_cases : n:nonce -> a:agent -> Lemma(ensures (~(n = Na) ==> n = Nb) /\ (isCharlie a \/ isHonest a))
+let nonce_cases n a = ()

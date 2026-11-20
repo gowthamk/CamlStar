@@ -18,9 +18,21 @@ val constructor_decls : Ast.modul -> string list
 (* functionality / injectivity / disjointness axioms as ordinary Ast.terms *)
 val datatype_axioms : Ast.modul -> Ast.term list
 
+(* enum types: no type parameters and only nullary constructors, the datatypes whose
+   exhaustiveness is universal *)
+val enum_types : Ast.modul -> Ast.inductive list
+
 (* source names of functions that return bool: encoded as SMT predicates [f: args ->
    Bool] under their own name rather than relationally abstracted into [f_rel] *)
 val bool_fn_names : Ast.modul -> string list
+
+(* non-recursive definitions whose body is a quantified formula, or that carry the
+   [logic] qualifier: no equation and no declaration, unfolded at their uses (Inline) *)
+val quantified_defs : Ast.modul -> string list
+
+(* raised by [definitional_equations] when a quantified definition is applied inside a
+   function body, or is recursive: it can only be unfolded in specs and proofs *)
+exception Quantified_def_error of string
 
 (* declarations for every user function: [f_rel(args, result)] for data functions,
    [f(args)] (a predicate) for bool-returning ones *)

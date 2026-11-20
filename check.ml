@@ -146,6 +146,7 @@ let mk_vc (env : env) (goal : term) : Vc.t list =
   else
     let scope, hyps = to_scope_hyps env in
     [ { Vc.decls = []; axioms = !module_axioms; scope; hyps; goal;
+        as_written = []; goal_as_written = None;
         instantiations = to_instantiations env;
         range = !cur_range; reason = !cur_reason } ]
 

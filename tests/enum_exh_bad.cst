@@ -1,0 +1,41 @@
+module EnumExhBad
+
+(* Negative control for tests/enum_exh.cst: false goals over the same types, and the
+   boundary of the axiom. Expected: 4 failed, 0 verified, none of them unknown or an
+   error; the countermodels show only the declared constructors as values of `agent`.
+   Not run by strip_and_reprove.sh. *)
+
+type agent =
+  | Alice : agent
+  | Bob : agent
+  | Charlie : agent
+
+type onode =
+  | NoneN : onode
+  | SomeN : agent -> onode
+
+let isHonest (a:agent) = match a with
+  | Alice -> true
+  | Bob -> true
+  | Charlie -> false
+
+let isSome (x:onode) = match x with
+  | NoneN -> false
+  | SomeN _ -> true
+
+(* false: Charlie is a third value *)
+val two_cases_bad : a:agent -> Lemma(ensures a = Alice \/ a = Bob)
+let two_cases_bad a = ()
+
+(* false: an honest agent can be Bob *)
+val honest_bad : a:agent -> Lemma(ensures isHonest a ==> a = Alice)
+let honest_bad a = ()
+
+(* false: Charlie is not honest *)
+val all_honest_bad : a:agent -> Lemma(ensures isHonest a)
+let all_honest_bad a = ()
+
+(* boundary, true but not covered: `onode` has a constructor with a field, so it gets no
+   exhaustiveness axiom (that would be ∀∃) and this stays unproved *)
+val onode_cases_open : x:onode -> Lemma(ensures ~(x = NoneN) ==> isSome x)
+let onode_cases_open x = ()

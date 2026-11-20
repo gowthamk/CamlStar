@@ -14,6 +14,8 @@ type t = {
   instantiations : Ast.term list;
   range  : Ast.range;
   reason : string;
+  as_written : (Ast.term * Ast.term) list;
+  goal_as_written : Ast.term option;
 }
 
 let lid_str (l : Ast.lid) = String.concat "." (l.Ast.ns @ [ l.Ast.bname ])
