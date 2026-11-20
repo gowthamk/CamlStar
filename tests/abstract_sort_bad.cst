@@ -1,0 +1,28 @@
+module AbstractSortBad
+
+(* The trap that tests/abstract_sort.cst closes, stated as false lemmas that must stay
+   red. `bmap` is an uninterpreted sort; with a nullary dummy type in its place
+   (`type bmap = | BMap : bmap`) the exhaustiveness axiom `forall x. x = BMap` made
+   `const true` and `const false` the same element, `sel_const` then gave `sel BMap k`
+   two values, and every goal below verified. Expected: 0 verified, 3 failed. *)
+
+type node
+
+type bmap
+assume val sel : bmap -> node -> bool
+assume val upd : bmap -> node -> bool -> bmap
+assume val const : bool -> bmap
+assume sel_upd1 : forall (m:bmap) (k:node) (v:bool). sel (upd m k v) k = v
+assume sel_const : forall (v:bool) (k:node). sel (const v) k = v
+
+(* false: the two constants are distinct maps *)
+val consts_equal : k:node -> Lemma(ensures const true = const false)
+let consts_equal k = ()
+
+(* false, and the exact shape that verified under the dummy type *)
+val bogus : k:node -> Lemma(ensures sel (const true) k = true /\ sel (const false) k = false ==> false)
+let bogus k = ()
+
+(* false: nothing relates two nodes *)
+val all_equal : a:node -> b:node -> Lemma(ensures a = b)
+let all_equal a b = ()

@@ -529,6 +529,16 @@ rawDecl:
       { fun sc -> (Sig_assume (name, phi sc), []) }
   | LET r=recflag lbs=separated_nonempty_list(AND, letbinding)
       { fun sc -> let (lbs', _) = build_lets r lbs sc in (Sig_let lbs', []) }
+  /* An uninterpreted sort (F*'s `val t : eqtype`, Ivy's `sort t`): elements and
+     equality, no constructors. It is an inductive with no constructors, so the query
+     gets its `declare-sort` and nothing else — in particular no exhaustiveness axiom,
+     which a dummy nullary type would get and which makes the sort a singleton. */
+  | TYPE name=IDENT
+      { fun _ -> (Sig_inductive { ind_name = lid_of_str name; ind_params = [];
+                                  ind_ctors = [] }, []) }
+  | ASSUME TYPE name=IDENT
+      { fun _ -> (Sig_inductive { ind_name = lid_of_str name; ind_params = [];
+                                  ind_ctors = [] }, []) }
   | p=pragma
       { fun _ -> (Sig_pragma p, []) }
 

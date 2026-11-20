@@ -1,0 +1,60 @@
+module AbstractSort
+
+(* Regression test for an uninterpreted sort: `type t` or `assume type t` with no
+   constructors (F*'s `val t : eqtype`, Ivy's `sort t`). The query gets `(declare-sort
+   UI_t 0)` and nothing else: no constructor relation, no exhaustiveness axiom. Before
+   this form the only way to write such a sort was a dummy datatype; a nullary dummy
+   (`type t = | T : t`) got the enum-exhaustiveness axiom, became a singleton, and made
+   any axiomatized theory over it inconsistent (tests/abstract_sort_bad.cst). Covers:
+   equality on the sort, an assumed predicate, an axiomatized map (the
+   FStar.Map shape: sel/upd/const with read-over-write facts) keyed by the sort, a
+   datatype with a field of the sort, and a recursive function over that datatype. *)
+
+type node
+assume type key
+
+assume val is_leader : node -> bool
+
+(* an axiomatized map from nodes to booleans *)
+type bmap
+assume val sel : bmap -> node -> bool
+assume val upd : bmap -> node -> bool -> bmap
+assume val const : bool -> bmap
+assume sel_upd1 : forall (m:bmap) (k:node) (v:bool). sel (upd m k v) k = v
+assume sel_upd2 : forall (m:bmap) (k:node) (v:bool) (k':node). ~(k = k') ==> sel (upd m k v) k' = sel m k'
+assume sel_const : forall (v:bool) (k:node). sel (const v) k = v
+
+(* a datatype over the sort *)
+type nlist =
+  | NNil : nlist
+  | NCons : node -> nlist -> nlist
+
+let rec mem (x:node) (l:nlist) = match l with
+  | NNil -> false
+  | NCons y r -> if x = y then true else mem x r
+
+val eq_refl : a:node -> Lemma(ensures a = a)
+let eq_refl a = ()
+
+val leader_self : u:node -> Lemma(ensures is_leader u = is_leader u)
+let leader_self u = ()
+
+val read_write : m:bmap -> k:node -> v:bool -> Lemma(ensures sel (upd m k v) k = v)
+let read_write m k v = ()
+
+val read_other : m:bmap -> k:node -> k':node -> v:bool ->
+  Lemma(ensures ~(k = k') ==> sel (upd m k v) k' = sel m k')
+let read_other m k k' v = ()
+
+val read_const : k:node -> Lemma(ensures sel (const true) k = true)
+let read_const k = ()
+
+(* two constants of the map sort must be allowed to differ *)
+val two_consts : k:node -> Lemma(ensures sel (const true) k = true /\ sel (const false) k = false)
+let two_consts k = ()
+
+val mem_cons : x:node -> l:nlist -> Lemma(ensures mem x (NCons x l))
+let mem_cons x l = ()
+
+val mem_key : k:key -> u:node -> Lemma(ensures k = k)
+let mem_key k u = ()

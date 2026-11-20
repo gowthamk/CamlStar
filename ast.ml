@@ -325,9 +325,12 @@ let string_of_inductive (ind : inductive) : string =
   let ctor dc =
     Printf.sprintf "  | %s : %s" (string_of_lid dc.dc_name) (string_of_tscheme dc.dc_typ)
   in
-  Printf.sprintf "type %s%s =\n%s"
-    params (string_of_lid ind.ind_name)
-    (String.concat "\n" (List.map ctor ind.ind_ctors))
+  match ind.ind_ctors with
+  | [] -> Printf.sprintf "type %s%s" params (string_of_lid ind.ind_name)
+  | ctors ->
+    Printf.sprintf "type %s%s =\n%s"
+      params (string_of_lid ind.ind_name)
+      (String.concat "\n" (List.map ctor ctors))
 
 let rec string_of_sigelt (se : sigelt) : string =
   let quals = string_of_quals se.sig_quals in
