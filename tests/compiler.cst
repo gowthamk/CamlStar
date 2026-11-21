@@ -1,9 +1,10 @@
 module Compiler
 
-(* The CSCI 3155 Project 1 stack-machine compiler, transcribed from
-   new_ravencheck/test_suite/Compiler/compiler_spec.rs (and Fstar_playground/CompilerSpec.fst).
-   Everything above `compile_correct` is the specification and is not to be changed; the
-   theorem at the end is the proof obligation.
+(* 
+  A simple stack-machine compiler.  Everything above `compile_correct` is the
+  specification and is not to be changed; the theorem at the end is the proof
+  obligation.
+*)
 
 (* ---- 1. Nat ---- *)
 type nat =
@@ -377,7 +378,7 @@ let rec eval (ex:expr) (en:env) = match ex with
      | Ok v1 -> eval e2 (ECons x v1 en)
      | Err -> Err)
 
-(* ---- 10. Compiler (based on the notebook's rules) ---- *)
+(* ---- 10. Compiler ---- *)
 let rec compile (ex:expr) = match ex with
   | Const d -> ICons (IPush d) INil
   | Id x -> ICons (ILoad x) INil
