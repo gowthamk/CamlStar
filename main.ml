@@ -6,8 +6,10 @@
    Runs the pipeline and prints a summary. Flags:
      --print-vcs   write FILE.vcs (the generated sequents) beside the source
      --solve       discharge each VC with z3 and report verified/failed/unknown
-     --failures-only  with --solve: print only the VCs that did not verify (the summary
+     --hide-passed with --solve: print only the VCs that did not verify (the summary
                    line still counts them all)
+     --hide-instantiations  with --solve: omit the instantiated-terms list from each
+                   unverified VC's report
      --dump-smt D  write each VC's SMT-LIB2 query to D/<reason>_<i>.smt2
      --no-cex      with --solve: report an unverified VC as `failed` with its location
                    only (no branch, hypotheses, countermodel or instantiated terms)
@@ -70,7 +72,8 @@ let print_ledger (vc : Vc.t) : unit =
 let () =
   let print_vcs = ref false in
   let solve = ref false in
-  let failures_only = ref false in
+  let hide_passed = ref false in
+  let hide_insts = ref false in
   let dump_smt = ref None in
   let cegqi = ref true in
   let fuel = ref 3 in
@@ -84,7 +87,8 @@ let () =
     (match args.(!i) with
      | "--print-vcs" -> print_vcs := true
      | "--solve" -> solve := true
-     | "--failures-only" -> failures_only := true
+     | "--hide-passed" -> hide_passed := true
+     | "--hide-instantiations" -> hide_insts := true
      | "--dump-smt" -> incr i; if !i < Array.length args then dump_smt := Some args.(!i)
      | "--no-cegqi" -> cegqi := false
      | "--cegqi-trace" -> trace := true
@@ -98,7 +102,8 @@ let () =
   | None ->
     prerr_endline
       "usage: camlstar [--print-vcs] [--solve] [--dump-smt DIR] \
-        [--no-cegqi] [--fuel N] [--cegqi-trace] [--timeout MS] [--no-cex] [--failures-only] <file.cst>";
+        [--no-cegqi] [--fuel N] [--cegqi-trace] [--timeout MS] [--no-cex] [--hide-passed] \
+        [--hide-instantiations] <file.cst>";
     exit 2
   | Some fn ->
     (try
@@ -144,8 +149,8 @@ let () =
               | Smt.Fuel_exhausted _ -> incr unknown
               | Smt.Unknown -> incr unknown
               | Smt.Solver_error _ -> incr errored);
-             (* --failures-only: a large file's verified VCs bury the few that need reading *)
-             if !solve && not (!failures_only && v = Smt.Verified) then begin
+             (* --hide-passed: a large file's verified VCs bury the few that need reading *)
+             if !solve && not (!hide_passed && v = Smt.Verified) then begin
                Printf.printf "  [VC#%s: %s] %s\n" (string_of_int @@ i+1)
                                   (label v) vc.Vc.reason;
                match v with
@@ -154,17 +159,17 @@ let () =
                | Smt.Saturated cex | Smt.Fuel_exhausted cex ->
                  print_context ctors vc;
                  Printf.printf "  • Counterexample:\n%s\n" (Cex.to_json cex);
-                 print_ledger vc
+                 if not !hide_insts then print_ledger vc
                | Smt.Unknown -> print_context ctors vc
                | _ -> ()
              end)
            results;
          Printf.printf "%d verified, %d failed, %d unknown, %d errors (of %d VCs); %d solver call(s)\n"
            !verified !failed !unknown !errored (List.length results) (Smt.solver_calls ());
-         if !failed > 0 || !unknown > 0 then
+         (*if !failed > 0 || !unknown > 0 then
            (if not !no_cex then print_endline
              "note: unverified VCs may be spurious \
-              (relational abstraction overapproximates functions)");
+              (relational abstraction overapproximates functions)");*)
          if !failed > 0 || !unknown > 0 || !errored > 0 then exit 1
        end
        else
