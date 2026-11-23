@@ -77,7 +77,7 @@ let string_of_range (r : range) : string =
 type data_con  = { dc_name : lid; dc_typ : tscheme }
 type inductive = { ind_name : lid; ind_params : tyvar list; ind_ctors : data_con list }
 
-type qualifier = Q_assumption | Q_private | Q_irreducible | Q_unfold | Q_noeq | Q_logic
+type qualifier = Q_assumption | Q_axiom | Q_private | Q_irreducible | Q_unfold | Q_noeq | Q_logic
 
 type pragma =
   | P_check of term | P_eval of term
@@ -298,6 +298,7 @@ and string_of_letbindings (lbs : letbindings) : string =
 
 let string_of_qual : qualifier -> string = function
   | Q_assumption  -> "assume"
+  | Q_axiom       -> "axiom"
   | Q_private     -> "private"
   | Q_irreducible -> "irreducible"
   | Q_unfold      -> "unfold"
