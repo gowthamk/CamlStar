@@ -1,0 +1,29 @@
+module AssumeExpr
+
+(* Expression-position `assume φ` contributes φ as a hypothesis, as in F*: let-bound,
+   φ holds in the continuation; in tail position, φ discharges the postcondition.
+   (`assume` emits no VC of its own.) Expected: 4 verified (the three definitions + the
+   `assert`), 0 failed. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+assume val p : nat -> bool
+assume val q : nat -> bool
+
+(* let-bound: p x is available to the (empty) continuation's postcondition *)
+val let_bound : x:nat -> Lemma(ensures p x)
+let let_bound x = let _ = assume (p x) in ()
+
+(* tail position: the body itself is the assumption *)
+val tail : x:nat -> Lemma(ensures p x)
+let tail x = assume (p x)
+
+(* the assumption is usable by a later assert in the same body *)
+val chained : x:nat -> Lemma(ensures q x)
+let chained x =
+  let _ = assume (p x ==> q x) in
+  let _ = assume (p x) in
+  let _ = assert (q x) in
+  ()

@@ -125,12 +125,15 @@ assume val L : <binders> -> Lemma(ensures <candidate>)
 ```
 Re-run. Target now green ⇒ the statement suffices; move to 4.6. Still red ⇒ wrong or
 insufficient candidate — re-classify, or the arm may need two facts jointly (add both).
-> Note: `assume` in *expression* position (`let _ = assume p in …`) is a no-op in Caml\* —
-> it drops `p`. The sufficiency check must use a top-level **`assume val`** as above.
+> Note: `assume p` in *expression* position (`let _ = assume p in …`) also works — it makes
+> `p` a hypothesis of what follows — but it holds only at that one site. Use the top-level
+> **`assume val`** above: it states the candidate as a reusable lemma, which is exactly what
+> 4.6 then proves.
 
 **4.6 Construct and prove.** Delete the `assume` keyword and give `L` a real proof
 (`let rec L … = match … `), by induction mirroring the datatype of its inductive parameter.
-Keep the call. Re-run.
+Keep the call. Re-run. (A plain `val L` left without its `let` is a check error, so a
+forgotten proof cannot silently survive as an axiom.)
 
 **4.7 Compose / recurse.** Re-read the result:
 - A **helper VC** fails → apply the **instantiation gate** (4.1) to the helper; if it

@@ -253,7 +253,13 @@ and synth_app (env : env) (head : term) (args : term list) (whole : term) : typ 
     (match args with
      | [ phi ] -> (t_unit, mk_vc env phi)
      | _ -> raise (Check_error "assert expects a single argument"))
-  | Tm_fvar l when lid_eq l assume_lid -> (t_unit, [])
+  | Tm_fvar l when lid_eq l assume_lid ->
+    (* assume φ: no VC, but the result {_:unit | φ} carries φ to what follows — as a
+       hypothesis of the continuation when let-bound, or of the postcondition's
+       subtyping VC in tail position (the same route a Lemma call's ensures takes) *)
+    (match args with
+     | [ phi ] -> (T_refine { rv = fresh_var "_"; rbase = B_unit; rphi = phi }, [])
+     | _ -> raise (Check_error "assume expects a single argument"))
   | Tm_fvar l when lid_eq l instantiate_lid ->
     (* instantiate!(e): type-check e (collecting its VCs) and yield unit; the hint
        itself is registered as a B_inst in [extend_lets] when it is a let RHS *)
@@ -442,6 +448,26 @@ let check_module (m : modul) : Vc.t list =
           lbs.lbs
       | Sig_assume (_, phi) -> module_axioms := !module_axioms @ [ phi ]
       | _ -> ())
+    m.mod_decls;
+  (* a plain [val] promises a definition; only an [assume val] (Q_assumption) may go
+     without one — otherwise a forgotten proof would silently become an axiom *)
+  let defined =
+    List.concat_map
+      (fun se -> match se.sig_el with
+         | Sig_let lbs -> List.map (fun lb -> lb.lb_name.vname) lbs.lbs
+         | _ -> [])
+      m.mod_decls
+  in
+  List.iter
+    (fun se -> match se.sig_el with
+       | Sig_val (l, _)
+         when not (List.mem Q_assumption se.sig_quals) && not (List.mem l.bname defined) ->
+         raise (Check_error
+                  (Printf.sprintf
+                     "%s: val %s has no definition; declare it with `assume val` if it is \
+                      meant to be uninterpreted"
+                     (string_of_range se.sig_rng) l.bname))
+       | _ -> ())
     m.mod_decls;
   (* pass 2: generate VCs from definitions and #check pragmas *)
   List.concat_map
