@@ -218,6 +218,14 @@ let single_match (e : term) (brs : branch list) : term =
 
 (* Build a (possibly recursive, possibly mutual) let group. `outer` is the scope
    outside the let; returns (letbindings, scope-for-body). *)
+(* `e1; e2` is `let _ = e1 in e2`: e1 is evaluated (and type-checked, its VCs and any
+   `assume`/Lemma facts flowing to e2) for effect only *)
+let mk_seq (e1 : term) (e2 : term) : term =
+  Tm_let ({ lb_rec = false;
+            lbs = [ { lb_name = fresh_var "_"; lb_scheme = None; lb_def = e1;
+                      lb_measure = None } ] },
+          e2)
+
 let build_lets is_rec (lbs : lb_syntax list) outer =
   let named = List.map (fun lb -> (lb, fresh_var lb.s_name)) lbs in
   let body_scope = List.fold_left (fun s (lb, v) -> bind_tm s lb.s_name v) outer named in
@@ -436,6 +444,13 @@ let build_abs_params params body sc =
 %nonassoc LOW_BRANCH
 %nonassoc BAR
 
+/* `e1; e2` extends as far right as possible, as in OCaml/F*: a let body, a match arm,
+   a fun body or a parenthesized term absorbs a following `; e` (shift over reduce).
+   So `let x = a in b; c` is `let x = a in (b; c)`, while `assert p; e` and
+   `if c then a else b; d` sequence after the assert / the whole if. */
+%nonassoc BELOW_SEMI
+%right SEMICOLON
+
 %start <Ast.modul> modul
 
 %%
@@ -619,16 +634,21 @@ atomicTyp:
       { t }
 
 /* ===== Terms / formulas (phi ⊂ term) ===== */
+/* a `;`-sequence of terms, right-nested: `a; b; c` is `a; (b; c)` */
+seqTerm:
+  | e1=term SEMICOLON e2=seqTerm { fun sc -> mk_seq (e1 sc) (e2 sc) }
+  | e=term %prec BELOW_SEMI      { e }
+
 term:
-  | FUN bs=nonempty_list(binder) ARROW e=term
+  | FUN bs=nonempty_list(binder) ARROW e=seqTerm
       { fun sc -> build_abs bs e sc }
   /* `let { f; g = p } = e in body` is a one-arm match on the record */
-  | LET LBRACE fs=recordPatFields RBRACE EQUALS e=term IN body=term
+  | LET LBRACE fs=recordPatFields RBRACE EQUALS e=seqTerm IN body=seqTerm
       { fun sc ->
           bind_scrut (e sc) (fun e ->
               let pat, sc' = record_pattern fs sc in
               Tm_match (e, [ { br_pat = pat; br_when = None; br_body = body sc' } ])) }
-  | LET r=recflag lbs=separated_nonempty_list(AND, letbinding) IN body=term
+  | LET r=recflag lbs=separated_nonempty_list(AND, letbinding) IN body=seqTerm
       { fun sc -> let (lbs', bsc) = build_lets r lbs sc in Tm_let (lbs', body bsc) }
   | IF c=term THEN a=term ELSE b=term
       { fun sc -> mk_if (c sc) (a sc) (b sc) }
@@ -659,7 +679,7 @@ binder:
         fun sc -> (fresh_var "_", Some t_unit, sc) }
 
 letbinding:
-  | name=IDENT params=list(param) ty=letAnnot EQUALS e=term
+  | name=IDENT params=list(param) ty=letAnnot EQUALS e=seqTerm
       { (* `let f p1 .. pn = e`  desugars the params to `fun p1 .. pn -> e`.
            A type annotation is only kept for the param-less form in v1. *)
         let s_typ = match params with [] -> ty | _ -> None in
@@ -686,7 +706,7 @@ branches:
 /* A branch is one or more `|`-separated alternatives (or-pattern) sharing a guard
    and body; it yields one Ast branch per alternative. */
 branch:
-  | BAR ps=separated_nonempty_list(BAR, pattern) g=option(preceded(WHEN, term)) ARROW e=term
+  | BAR ps=separated_nonempty_list(BAR, pattern) g=option(preceded(WHEN, term)) ARROW e=seqTerm
       { fun sc ->
           List.map (fun (pat, sc') ->
               { br_pat = pat;
@@ -703,7 +723,7 @@ multibranches:
 /* As `branch`: `|`-separated alternatives, each a tuple of patterns, one row each. */
 multibranch:
   | BAR rows=separated_nonempty_list(BAR, patternTuple)
-        g=option(preceded(WHEN, term)) ARROW e=term
+        g=option(preceded(WHEN, term)) ARROW e=seqTerm
       { fun sc ->
           List.map (fun (pats, sc') ->
               { r_pats = pats;
@@ -772,7 +792,7 @@ atomicTerm:
   | id=IDENT  { fun sc -> resolve_tm sc id }
   | uid=UIDENT { fun _ -> Tm_fvar (lid_of_str uid) }
   | LPAREN RPAREN               { fun _ -> Tm_const C_unit }
-  | LPAREN e=term RPAREN        { e }
+  | LPAREN e=seqTerm RPAREN     { e }
   | LPAREN e=term SUBTYPE t=typ RPAREN { fun sc -> Tm_ascribed (e sc, t sc) }
   /* field access `e.f` → the projection `f e`; postfix, so `g s.f` is `g (f s)` and
      `s.origin.px` chains */

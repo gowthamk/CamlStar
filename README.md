@@ -55,7 +55,7 @@ The driver `camlstar` (`main.ml`) chains these and reports results.
 |--------|------|
 | `ast.ml[i]` | The core **stratified AST**: `base_typ`, `typ` (`T_refine`/`T_arrow`), `term` (`Tm_var`/`Tm_fvar`/`Tm_const`/`Tm_abs`/`Tm_app`/`Tm_let`/`Tm_match`/`Tm_ascribed`/`Tm_quant`), `sigelt` (`Sig_inductive`/`Sig_let`/`Sig_val`/`Sig_assume`/`Sig_pragma`/`Sig_fail`). Binders are **named** with a globally-unique `vid`. Smart constructors (`mk_and`, `mk_eq`, `mk_forall`, `mk_squash`, …) and debug printers. |
 | `lexer.mll` | `ocamllex` lexer (nested comments, `//` lines, operators, pragmas, `[@@ ]`). |
-| `parser.mly` | `menhir` grammar that builds the `Ast` **directly** in its actions: resolves names to `vid`s, and desugars sugar **in place** — `Lemma(ensures q)` → `squash q` = `{_:unit | q}`, `assert`/`assume`, `if` → `match` on `bool`, `x:B{φ}` refinements, `(e <: T)` ascriptions. |
+| `parser.mly` | `menhir` grammar that builds the `Ast` **directly** in its actions: resolves names to `vid`s, and desugars sugar **in place** — `Lemma(ensures q)` → `squash q` = `{_:unit | q}`, `assert`/`assume`, `e1; e2` → `let _ = e1 in e2`, `if` → `match` on `bool`, `x:B{φ}` refinements, `(e <: T)` ascriptions. |
 | `parse.ml[i]` | `parse_string` / `parse_file` wrappers; `Parse_error`. |
 
 ### Type inference (Hindley–Milner over *shapes*)

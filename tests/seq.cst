@@ -1,0 +1,39 @@
+module Seq
+
+(* Sequencing `e1; e2` (sugar for `let _ = e1 in e2`), in every position the grammar
+   accepts it, using `assume` so that each test verifies only if the `;` parses with
+   OCaml/F* scope. Expected: 8 verified, 0 failed. *)
+
+type nat =
+  | Z : nat
+  | S : nat -> nat
+
+assume val p : nat -> bool
+assume val q : nat -> bool
+
+(* a chain in a definition body: `a; b; c; d` is `a; (b; (c; d))` *)
+val chain : x:nat -> Lemma(ensures q x)
+let chain x = assume (p x ==> q x); assume (p x); assert (q x); ()
+
+(* in a let body: `let y = x in (assume …; ())` *)
+val in_let : x:nat -> Lemma(ensures p x)
+let in_let x = let y = x in assume (p y); ()
+
+(* in match arms: each arm's body is its own sequence, and the next `|` ends it *)
+val in_arms : x:nat -> Lemma(ensures p x)
+let in_arms x = match x with
+  | Z -> assume (p Z); ()
+  | S z -> assume (p (S z)); ()
+
+(* parenthesized *)
+val in_parens : x:nat -> Lemma(ensures p x)
+let in_parens x = (assume (p x); ())
+
+(* after an if: `if c then a else b; d` is `(if c then a else b); d`, so the assume
+   also covers the then-branch path — it would not if `; d` belonged to the else *)
+val after_if : x:nat -> Lemma(ensures p x)
+let after_if x = if q x then () else (); assume (p x); ()
+
+(* as a let right-hand side *)
+val in_rhs : x:nat -> Lemma(ensures p x)
+let in_rhs x = let u = assume (p x); () in u
