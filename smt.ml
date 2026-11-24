@@ -147,7 +147,24 @@ let run_z3 ?(timeout_ms = 10000) (query : string) : raw =
        empty. *)
     let asts = Z3.SMT.parse_smtlib2_string ctx query [] [] [] [] in
     let exprs = Z3.AST.ASTVector.to_expr_list asts in
-    let solver = Z3.Solver.mk_solver ctx None in
+    (* Race two configurations of the [smt] tactic on two threads with [par-or]; the
+       first to answer wins, and its model is the one returned:
+       - MBQI only (E-matching off): finds countermodels fast. With E-matching on, the
+         search between MBQI rounds churns through matches of the definitional axioms
+         against relation atoms, and a [sat] query that MBQI alone answers in under a
+         second can time out.
+       - Z3's default (E-matching + MBQI): needed for most [unsat] proofs, which rely on
+         E-matching over the functionality/injectivity axioms; MBQI alone times out on
+         them.
+       Measured on the test suite plus a development-state compiler proof: no verdict
+       lost, and countermodels instead of timeouts during development (see
+       caml-star-z3-findings.md). The E-matching switch must be set through the tactic's
+       params: [Solver.set_parameters] on an incremental solver silently ignores it. *)
+    let smt = Z3.Tactic.mk_tactic ctx "smt" in
+    let no_ematching = Z3.Params.mk_params ctx in
+    Z3.Params.add_bool no_ematching (Z3.Symbol.mk_string ctx "ematching") false;
+    let mbqi_only = Z3.Tactic.using_params ctx smt no_ematching in
+    let solver = Z3.Solver.mk_solver_t ctx (Z3.Tactic.par_or ctx [ mbqi_only; smt ]) in
     Z3.Solver.add solver exprs;
     match Z3.Solver.check solver [] with
     | Z3.Solver.UNSATISFIABLE -> R_verified

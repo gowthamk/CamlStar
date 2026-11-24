@@ -29,6 +29,10 @@ val string_of_verdict : verdict -> string
      argument triggers on every term of its sort, so adding instantiations can make one
      query blow up. Such a query reports [Unknown] instead of hanging.
 
+   Each query races two Z3 configurations with the [par-or] tactic — MBQI only (fast
+   countermodels) and Z3's default E-matching + MBQI (most [unsat] proofs) — and takes the
+   first answer.
+
    The returned [Vc.t] is the *final* one, so its [instantiations] include everything CEGQI
    added. With [dump_dir], each round's query is written to <dir>/<reason>_<i>.smt2, with a
    _r<round> suffix after the first. *)
